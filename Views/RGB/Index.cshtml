@@ -1,0 +1,131 @@
+@model RGBIndexViewModel
+@{
+    ViewData["Title"] = "RGB Wallet";
+}
+
+<div class="sticky-header-setup"></div>
+<div class="sticky-header d-flex flex-wrap gap-3 align-items-center justify-content-between">
+    <h2 class="mb-0">
+        @ViewData["Title"]
+        <small class="text-muted">@Model.WalletName</small>
+    </h2>
+    <div class="d-flex gap-3">
+        <form asp-action="Refresh" asp-route-storeId="@Model.StoreId" method="post">
+            <button type="submit" class="btn btn-secondary">
+                <span class="fa fa-sync"></span> Refresh
+            </button>
+        </form>
+        <a asp-action="Settings" asp-route-storeId="@Model.StoreId" class="btn btn-secondary">
+            <span class="fa fa-cog"></span> Settings
+        </a>
+    </div>
+</div>
+
+<partial name="_StatusMessage" />
+
+@if (!Model.IsConnected)
+{
+    <div class="alert alert-warning">
+        <strong>Connection Error:</strong> @Model.ConnectionError
+    </div>
+}
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">BTC Balance</h5>
+                <p class="card-text display-6">@((Model.BtcBalance / 100000000m).ToString("0.########")) BTC</p>
+                <small class="text-muted">@Model.BtcBalance.ToString("N0") sats</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Colored Balance</h5>
+                <p class="card-text display-6">@Model.ColoredBalance.ToString("N0") sats</p>
+                <small class="text-muted">Available for RGB allocations</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">Colorable UTXOs</h5>
+                @if (Model.ColorableUtxoCount >= 0)
+                {
+                    <p class="card-text display-6">@Model.ColorableUtxoCount</p>
+                }
+                else
+                {
+                    <p class="card-text text-muted">View count on UTXOs page</p>
+                }
+                <a asp-action="Utxos" asp-route-storeId="@Model.StoreId" class="btn btn-sm btn-outline-primary">
+                    Manage UTXOs
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h3>RGB Assets</h3>
+    <a asp-action="IssueAsset" asp-route-storeId="@Model.StoreId" class="btn btn-primary">
+        <span class="fa fa-plus"></span> Issue New Asset
+    </a>
+</div>
+
+@if (Model.Assets.Any())
+{
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>Ticker</th>
+                    <th>Name</th>
+                    <th>Asset ID</th>
+                    <th>Precision</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var asset in Model.Assets)
+                {
+                    <tr>
+                        <td><strong>@asset.Ticker</strong></td>
+                        <td>@asset.Name</td>
+                        <td><code class="small">@asset.AssetId</code></td>
+                        <td>@asset.Precision</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+else
+{
+    <div class="alert alert-info">
+        No RGB assets yet. <a asp-action="IssueAsset" asp-route-storeId="@Model.StoreId">Issue your first asset</a> to get started.
+    </div>
+}
+
+<div class="mt-4">
+    <h4>Quick Actions</h4>
+    <div class="d-flex gap-2 flex-wrap">
+        <form asp-action="EnablePaymentMethod" asp-route-storeId="@Model.StoreId" method="post" class="d-inline">
+            <button type="submit" class="btn btn-success">
+                <span class="fa fa-check-circle"></span> Enable RGB Payments
+            </button>
+        </form>
+        <a asp-action="Assets" asp-route-storeId="@Model.StoreId" class="btn btn-outline-secondary">
+            <span class="fa fa-coins"></span> View All Assets
+        </a>
+        <a asp-action="Utxos" asp-route-storeId="@Model.StoreId" class="btn btn-outline-secondary">
+            <span class="fa fa-cubes"></span> Manage UTXOs
+        </a>
+        <a asp-action="Transfers" asp-route-storeId="@Model.StoreId" class="btn btn-outline-secondary">
+            <span class="fa fa-exchange-alt"></span> View Transfers
+        </a>
+    </div>
+</div>
+

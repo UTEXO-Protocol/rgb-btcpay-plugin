@@ -1,0 +1,61 @@
+@model RGBSetupViewModel
+@{
+    ViewData["Title"] = "Setup RGB Wallet";
+}
+
+<div class="sticky-header-setup"></div>
+<div class="sticky-header">
+    <h2>@ViewData["Title"]</h2>
+</div>
+
+<partial name="_StatusMessage" />
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-body">
+                <h4 class="card-title mb-4">Create RGB Wallet</h4>
+                
+                <p class="text-muted mb-4">
+                    RGB enables you to issue and receive client-side validated assets on Bitcoin. 
+                    Create a wallet to start accepting RGB payments.
+                </p>
+
+                <form asp-action="SetupWallet" asp-route-storeId="@Model.StoreId" method="post">
+                    <div asp-validation-summary="ModelOnly" class="text-danger"></div>
+                    
+                    <div class="mb-3">
+                        <label asp-for="WalletName" class="form-label"></label>
+                        <input asp-for="WalletName" class="form-control" placeholder="My RGB Wallet" />
+                        <span asp-validation-for="WalletName" class="text-danger"></span>
+                    </div>
+
+                    <div class="alert alert-info">
+                        <strong>Note:</strong> A new RGB wallet will be created with fresh keys. 
+                        The wallet will be connected to the local RGB Node at <code>http://127.0.0.1:8000</code>.
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">
+                        <span class="fa fa-wallet"></span> Create Wallet
+                    </button>
+                </form>
+            </div>
+        </div>
+        
+        <div class="card mt-4">
+            <div class="card-body">
+                <h5 class="card-title">What is RGB?</h5>
+                <p class="card-text">
+                    RGB is a protocol for client-side validated assets on Bitcoin. Unlike other token protocols, 
+                    RGB keeps all asset data off-chain while using Bitcoin for security and finality.
+                </p>
+                <ul>
+                    <li><strong>Privacy:</strong> Asset transfers are not visible on the blockchain</li>
+                    <li><strong>Scalability:</strong> Off-chain validation reduces blockchain bloat</li>
+                    <li><strong>Bitcoin-native:</strong> Secured by Bitcoin's proof-of-work</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+

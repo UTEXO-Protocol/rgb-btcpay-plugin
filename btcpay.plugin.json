@@ -1,0 +1,13 @@
+{
+  "$schema": "https://plugin-builder.btcpayserver.org/schemas/plugin.schema.json",
+  "identifier": "BTCPayServer.Plugins.RGB",
+  "name": "RGB",
+  "description": "Accept RGB asset payments in your BTCPay Server store. Supports asset issuance, blind receive invoices, and multi-network deployment.",
+  "version": "1.0.1",
+  "author": "ThunderStack",
+  "authorLink": "https://thunderstack.org",
+  "projectUrl": "https://github.com/nkmsbst/btcpay-rgb-plugin",
+  "pluginDependencies": [],
+  "systemPlugin": false
+}
+

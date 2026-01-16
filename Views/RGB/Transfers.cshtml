@@ -1,0 +1,85 @@
+@model RGBTransfersViewModel
+@{
+    ViewData["Title"] = "RGB Transfers";
+}
+
+<div class="sticky-header-setup"></div>
+<div class="sticky-header d-flex align-items-center justify-content-between">
+    <h2>@ViewData["Title"]</h2>
+    <a asp-action="Index" asp-route-storeId="@Model.StoreId" class="btn btn-secondary">
+        <span class="fa fa-arrow-left"></span> Back
+    </a>
+</div>
+
+<partial name="_StatusMessage" />
+
+@if (Model.Transfers.Any())
+{
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Type</th>
+                    <th>Status</th>
+                    <th>Amount</th>
+                    <th>Transaction</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var transfer in Model.Transfers.OrderByDescending(t => t.Idx))
+                {
+                    <tr>
+                        <td>@transfer.Idx</td>
+                        <td>
+                            @if (transfer.Kind == "Receive Blind" || transfer.Kind == "Receive Witness")
+                            {
+                                <span class="badge bg-success">@transfer.Kind</span>
+                            }
+                            else if (transfer.Kind == "Send")
+                            {
+                                <span class="badge bg-primary">@transfer.Kind</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-info">@transfer.Kind</span>
+                            }
+                        </td>
+                        <td>
+                            @if (transfer.Status == "Settled")
+                            {
+                                <span class="badge bg-success">@transfer.Status</span>
+                            }
+                            else if (transfer.Status == "Failed")
+                            {
+                                <span class="badge bg-danger">@transfer.Status</span>
+                            }
+                            else
+                            {
+                                <span class="badge bg-warning">@transfer.Status</span>
+                            }
+                        </td>
+                        <td>@transfer.Amount.ToString("N0")</td>
+                        <td>
+                            @if (!string.IsNullOrEmpty(transfer.Txid))
+                            {
+                                <code class="small">@transfer.Txid.Substring(0, 16)...</code>
+                            }
+                            else
+                            {
+                                <span class="text-muted">-</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+else
+{
+    <div class="alert alert-info">
+        No transfers yet. Transfers will appear here when you send or receive RGB assets.
+    </div>
+}
+

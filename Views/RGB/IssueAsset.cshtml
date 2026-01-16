@@ -1,0 +1,64 @@
+@model RGBIssueAssetViewModel
+@{
+    ViewData["Title"] = "Issue RGB Asset";
+}
+
+<div class="sticky-header-setup"></div>
+<div class="sticky-header d-flex align-items-center justify-content-between">
+    <h2>@ViewData["Title"]</h2>
+    <a asp-action="Assets" asp-route-storeId="@Model.StoreId" class="btn btn-secondary">
+        <span class="fa fa-arrow-left"></span> Back to Assets
+    </a>
+</div>
+
+<partial name="_StatusMessage" />
+
+<div class="row">
+    <div class="col-lg-6">
+        <div class="card">
+            <div class="card-body">
+                <form asp-action="IssueAsset" asp-route-storeId="@Model.StoreId" method="post">
+                    <div asp-validation-summary="ModelOnly" class="text-danger"></div>
+                    
+                    <div class="mb-3">
+                        <label asp-for="Ticker" class="form-label"></label>
+                        <input asp-for="Ticker" class="form-control" placeholder="e.g. MYTOKEN" maxlength="8" />
+                        <span asp-validation-for="Ticker" class="text-danger"></span>
+                        <div class="form-text">Short symbol for your asset (2-8 characters)</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label asp-for="Name" class="form-label"></label>
+                        <input asp-for="Name" class="form-control" placeholder="e.g. My Token" />
+                        <span asp-validation-for="Name" class="text-danger"></span>
+                        <div class="form-text">Full name of your asset</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label asp-for="Amount" class="form-label"></label>
+                        <input asp-for="Amount" type="number" class="form-control" min="1" />
+                        <span asp-validation-for="Amount" class="text-danger"></span>
+                        <div class="form-text">Total supply to issue</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label asp-for="Precision" class="form-label"></label>
+                        <input asp-for="Precision" type="number" class="form-control" min="0" max="18" />
+                        <span asp-validation-for="Precision" class="text-danger"></span>
+                        <div class="form-text">Decimal places (0 = whole units only)</div>
+                    </div>
+
+                    <div class="alert alert-warning">
+                        <strong>Important:</strong> Issuing an asset requires at least one colorable UTXO. 
+                        Make sure you have funded your wallet and created UTXOs before issuing.
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">
+                        <span class="fa fa-coins"></span> Issue Asset
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+

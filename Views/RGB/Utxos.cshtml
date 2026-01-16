@@ -1,0 +1,116 @@
+@model RGBUtxosViewModel
+@{
+    ViewData["Title"] = "RGB UTXOs";
+}
+
+<div class="sticky-header-setup"></div>
+<div class="sticky-header d-flex align-items-center justify-content-between">
+    <h2>@ViewData["Title"]</h2>
+    <div class="d-flex gap-2">
+        <form asp-action="CreateUtxos" asp-route-storeId="@Model.StoreId" method="post" class="d-inline">
+            <input type="hidden" name="count" value="5" />
+            <button type="submit" class="btn btn-primary">
+                <span class="fa fa-plus"></span> Create UTXOs
+            </button>
+        </form>
+        <a asp-action="Index" asp-route-storeId="@Model.StoreId" class="btn btn-secondary">
+            <span class="fa fa-arrow-left"></span> Back
+        </a>
+    </div>
+</div>
+
+<partial name="_StatusMessage" />
+
+<div class="alert alert-info mb-4">
+    <strong>What are colorable UTXOs?</strong> RGB assets are "colored" onto Bitcoin UTXOs. 
+    You need empty colorable UTXOs to receive RGB payments or issue assets.
+</div>
+
+@{
+    var colorableEmpty = Model.Utxos.Count(u => u.Colorable && !u.HasAllocations);
+    var colorableUsed = Model.Utxos.Count(u => u.Colorable && u.HasAllocations);
+    var regular = Model.Utxos.Count(u => !u.Colorable);
+}
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card text-bg-success">
+            <div class="card-body">
+                <h5 class="card-title">Available for RGB</h5>
+                <p class="card-text display-6">@colorableEmpty</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card text-bg-warning">
+            <div class="card-body">
+                <h5 class="card-title">Holding Assets</h5>
+                <p class="card-text display-6">@colorableUsed</p>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card text-bg-secondary">
+            <div class="card-body">
+                <h5 class="card-title">Regular UTXOs</h5>
+                <p class="card-text display-6">@regular</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-hover">
+        <thead>
+            <tr>
+                <th>Outpoint</th>
+                <th>Amount (sats)</th>
+                <th>Type</th>
+                <th>Allocations</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var utxo in Model.Utxos.OrderByDescending(u => u.Colorable && !u.HasAllocations))
+            {
+                <tr class="@(utxo.Colorable && !utxo.HasAllocations ? "table-success" : "")">
+                    <td><code class="small">@utxo.Outpoint</code></td>
+                    <td>@utxo.Amount.ToString("N0")</td>
+                    <td>
+                        @if (utxo.Colorable)
+                        {
+                            <span class="badge bg-primary">Colorable</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-secondary">Regular</span>
+                        }
+                    </td>
+                    <td>
+                        @if (utxo.Allocations.Any())
+                        {
+                            foreach (var alloc in utxo.Allocations)
+                            {
+                                <div>
+                                    <code class="small">@alloc.AssetId.Substring(0, 20)...</code>: @alloc.Amount
+                                    @if (alloc.Settled)
+                                    {
+                                        <span class="badge bg-success">Settled</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="badge bg-warning">Pending</span>
+                                    }
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            <span class="text-muted">-</span>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+

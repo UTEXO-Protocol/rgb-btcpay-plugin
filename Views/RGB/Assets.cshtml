@@ -1,0 +1,57 @@
+@model RGBAssetsViewModel
+@{
+    ViewData["Title"] = "RGB Assets";
+}
+
+<div class="sticky-header-setup"></div>
+<div class="sticky-header d-flex align-items-center justify-content-between">
+    <h2>@ViewData["Title"]</h2>
+    <div class="d-flex gap-2">
+        <a asp-action="IssueAsset" asp-route-storeId="@Model.StoreId" class="btn btn-primary">
+            <span class="fa fa-plus"></span> Issue New Asset
+        </a>
+        <a asp-action="Index" asp-route-storeId="@Model.StoreId" class="btn btn-secondary">
+            <span class="fa fa-arrow-left"></span> Back
+        </a>
+    </div>
+</div>
+
+<partial name="_StatusMessage" />
+
+@if (Model.Assets.Any())
+{
+    <div class="row">
+        @foreach (var asset in Model.Assets)
+        {
+            <div class="col-md-6 col-lg-4 mb-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h5 class="card-title">
+                            <span class="badge bg-primary me-2">@asset.Ticker</span>
+                            @asset.Name
+                        </h5>
+                        <p class="card-text small">
+                            <strong>Asset ID:</strong><br />
+                            <code class="text-break">@asset.AssetId</code>
+                        </p>
+                        <ul class="list-unstyled mb-0">
+                            <li><strong>Precision:</strong> @asset.Precision</li>
+                            <li><strong>Issued Supply:</strong> @asset.IssuedSupply.ToString("N0")</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+}
+else
+{
+    <div class="alert alert-info">
+        <h5>No RGB Assets</h5>
+        <p>You haven't issued any RGB assets yet. RGB assets are client-side validated tokens on Bitcoin.</p>
+        <a asp-action="IssueAsset" asp-route-storeId="@Model.StoreId" class="btn btn-primary">
+            <span class="fa fa-plus"></span> Issue Your First Asset
+        </a>
+    </div>
+}
+

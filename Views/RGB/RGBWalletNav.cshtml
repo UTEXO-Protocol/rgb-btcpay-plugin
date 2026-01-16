@@ -1,0 +1,43 @@
+@using BTCPayServer
+@using BTCPayServer.Abstractions.Extensions
+@using Microsoft.AspNetCore.Routing
+@model BTCPayServer.Components.MainNav.MainNavViewModel
+@{
+    var storeId = Model?.Store?.Id ?? Context.GetRouteValue("storeId")?.ToString();
+}
+
+@if (!string.IsNullOrEmpty(storeId))
+{
+    <li class="nav-item">
+        <a asp-controller="RGB" asp-action="Index" asp-route-storeId="@storeId"
+           class="nav-link @ViewData.ActivePageClass("RGB")" id="StoreNav-RGB">
+            <span class="me-2 btcpay-status btcpay-status--pending"></span>
+            <span>RGB Wallet</span>
+        </a>
+        
+        @if (ViewData.IsCategoryActive("RGB"))
+        {
+            <li class="nav-item nav-item-sub">
+                <a id="StoreNav-RGB-Setup"
+                   class="nav-link @ViewData.ActivePageClass("Setup", "RGB")"
+                   asp-controller="RGB"
+                   asp-action="Setup"
+                   asp-route-storeId="@storeId">Setup</a>
+            </li>
+            <li class="nav-item nav-item-sub">
+                <a id="StoreNav-RGB-Assets"
+                   class="nav-link @ViewData.ActivePageClass("Assets", "RGB")"
+                   asp-controller="RGB"
+                   asp-action="Assets"
+                   asp-route-storeId="@storeId">Assets</a>
+            </li>
+            <li class="nav-item nav-item-sub">
+                <a id="StoreNav-RGB-Transfers"
+                   class="nav-link @ViewData.ActivePageClass("Transfers", "RGB")"
+                   asp-controller="RGB"
+                   asp-action="Transfers"
+                   asp-route-storeId="@storeId">Transfers</a>
+            </li>
+        }
+    </li>
+}

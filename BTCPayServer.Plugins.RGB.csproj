@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+    <PropertyGroup>
+        <TargetFramework>net8.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+
+        <Product>RGB Payments</Product>
+        <Description>Accept RGB (client-side validated assets) payments in BTCPay Server. Issue and receive RGB20 tokens on Bitcoin.</Description>
+        <Version>1.0.1</Version>
+        <Authors>ThunderStack</Authors>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+        <GenerateRuntimeConfigDevFile>true</GenerateRuntimeConfigDevFile>
+        <MvcRazorCompileOnPublish>false</MvcRazorCompileOnPublish>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <AddRazorSupportForMvc>true</AddRazorSupportForMvc>
+        <PreserveCompilationContext>false</PreserveCompilationContext>
+        <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+        <!-- Prevent Razor from compiling files in submodules -->
+        <EnableDefaultRazorComponentItems>false</EnableDefaultRazorComponentItems>
+    </PropertyGroup>
+
+    <!-- Exclude submodules from compilation - they're referenced as a project, not compiled directly -->
+    <ItemGroup>
+        <Compile Remove="submodules\**" />
+        <Content Remove="submodules\**" />
+        <EmbeddedResource Remove="submodules\**" />
+        <None Remove="submodules\**" />
+    </ItemGroup>
+
+    <ItemDefinitionGroup>
+        <ProjectReference>
+            <Properties>StaticWebAssetsEnabled=false</Properties>
+            <Private>false</Private>
+            <Private Condition="'$(Configuration)' == 'Debug'">true</Private>
+            <ExcludeAssets>runtime;native;build;buildTransitive;contentFiles</ExcludeAssets>
+        </ProjectReference>
+    </ItemDefinitionGroup>
+    
+    <ItemGroup>
+        <!-- BTCPay Server reference - Plugin Builder uses submodule, local dev uses NArk structure -->
+        <ProjectReference Include="submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj" 
+                          Condition="Exists('submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj')" />
+        <ProjectReference Include="../NArk/submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj" 
+                          Condition="!Exists('submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj') And Exists('../NArk/submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj')" />
+        
+        <PackageReference Include="Jering.Javascript.NodeJS" Version="7.0.0" />
+        <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.16">
+            <PrivateAssets>all</PrivateAssets>
+            <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+        <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.10.0" />
+        <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.11" />
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+        <PackageReference Include="NBitcoin" Version="9.0.0" />
+        
+        <EmbeddedResource Include="rgb-icon.svg" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Content Include="Scripts\**" CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+</Project>

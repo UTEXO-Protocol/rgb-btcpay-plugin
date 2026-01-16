@@ -1,0 +1,164 @@
+@model RGBSettingsViewModel
+@{
+    ViewData["Title"] = "RGB Wallet Settings";
+}
+
+<div class="sticky-header-setup"></div>
+<div class="sticky-header d-flex align-items-center justify-content-between">
+    <h2>@ViewData["Title"]</h2>
+    <a asp-action="Index" asp-route-storeId="@Model.StoreId" class="btn btn-secondary">
+        <span class="fa fa-arrow-left"></span> Back
+    </a>
+</div>
+
+<partial name="_StatusMessage" />
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fa fa-plug"></i> RGB Node Connection</h5>
+                @if (Model.IsConnected)
+                {
+                    <span class="badge bg-success"><i class="fa fa-check"></i> Connected</span>
+                }
+                else
+                {
+                    <span class="badge bg-danger"><i class="fa fa-times"></i> Disconnected</span>
+                }
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">RGB Node URL</label>
+                    <input type="text" class="form-control" value="@Model.RgbNodeUrl" readonly />
+                    <div class="form-text">
+                        Configured via environment variable <code>RGB_NODE_URL</code> or <code>rgb.json</code> in BTCPay data directory.
+                    </div>
+                </div>
+                @if (!string.IsNullOrEmpty(Model.ConnectionError))
+                {
+                    <div class="alert alert-danger mb-3">
+                        <i class="fa fa-exclamation-triangle"></i> @Model.ConnectionError
+                    </div>
+                }
+                <form asp-action="TestConnection" asp-route-storeId="@Model.StoreId" method="post" class="d-inline">
+                    <button type="submit" class="btn btn-outline-primary">
+                        <i class="fa fa-sync"></i> Test Connection
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <form asp-action="SaveSettings" asp-route-storeId="@Model.StoreId" method="post">
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="fa fa-credit-card"></i> Payment Configuration</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">
+                        Configure which RGB asset customers must use when paying invoices.
+                    </p>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">Accepted Asset</label>
+                        <select name="DefaultAssetId" class="form-select" id="assetSelect">
+                            <option value="">-- Select an asset --</option>
+                            @foreach (var asset in Model.AvailableAssets)
+                            {
+                                <option value="@asset.AssetId" 
+                                        selected="@(Model.DefaultAssetId == asset.AssetId)">
+                                    @asset.Ticker - @asset.Name (@asset.AssetId[..20]...)
+                                </option>
+                            }
+                        </select>
+                        <div class="form-text">
+                            Select the RGB asset that customers must use for payments.
+                            @if (Model.AvailableAssets.Count == 0)
+                            {
+                                <span class="text-warning">
+                                    <i class="fa fa-exclamation-triangle"></i> 
+                                    No assets found. <a asp-action="IssueAsset" asp-route-storeId="@Model.StoreId">Issue an asset</a> first.
+                                </span>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input type="checkbox" name="AcceptAnyAsset" value="true" 
+                               class="form-check-input" id="acceptAny"
+                               checked="@Model.AcceptAnyAsset" />
+                        <label class="form-check-label" for="acceptAny">
+                            Accept any RGB asset (not recommended for production)
+                        </label>
+                        <div class="form-text">
+                            If enabled, customers can pay with any RGB asset. The amount will be in asset units.
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fa fa-save"></i> Save Payment Settings
+                    </button>
+                </div>
+            </div>
+        </form>
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Wallet Information</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">Wallet ID</dt>
+                    <dd class="col-sm-8"><code>@Model.WalletId</code></dd>
+                    
+                    <dt class="col-sm-4">Name</dt>
+                    <dd class="col-sm-8">@Model.WalletName</dd>
+                    
+                    <dt class="col-sm-4">Network</dt>
+                    <dd class="col-sm-8"><span class="badge bg-secondary">@Model.Network</span></dd>
+                    
+                    <dt class="col-sm-4">Created</dt>
+                    <dd class="col-sm-8">@Model.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")</dd>
+                </dl>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Extended Public Keys</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">Master Fingerprint</label>
+                    <input type="text" class="form-control font-monospace" value="@Model.MasterFingerprint" readonly />
+                </div>
+                
+                <div class="mb-3">
+                    <label class="form-label">Vanilla XPUB (BTC)</label>
+                    <textarea class="form-control font-monospace" rows="2" readonly>@Model.XpubVanilla</textarea>
+                </div>
+                
+                <div class="mb-0">
+                    <label class="form-label">Colored XPUB (RGB)</label>
+                    <textarea class="form-control font-monospace" rows="2" readonly>@Model.XpubColored</textarea>
+                </div>
+            </div>
+        </div>
+
+        <div class="card border-danger">
+            <div class="card-header text-bg-danger">
+                <h5 class="mb-0">Danger Zone</h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted">
+                    These actions are irreversible. Make sure you have backed up your wallet before proceeding.
+                </p>
+                <button type="button" class="btn btn-outline-danger" disabled>
+                    <span class="fa fa-trash"></span> Delete Wallet
+                </button>
+                <small class="d-block mt-2 text-muted">Wallet deletion is not implemented yet.</small>
+            </div>
+        </div>
+    </div>
+</div>
+
