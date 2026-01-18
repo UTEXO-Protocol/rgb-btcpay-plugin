@@ -54,7 +54,6 @@ public class RgbSdkService
             var config = new {
                 XpubVanilla = creds.XpubVanilla,
                 XpubColored = creds.XpubColored,
-                Mnemonic = creds.Mnemonic,
                 MasterFingerprint = creds.MasterFingerprint,
                 RgbNodeEndpoint = _cfg.RgbNodeUrl,
                 Network = string.IsNullOrEmpty(creds.Network) ? _cfg.Network : creds.Network
@@ -158,4 +157,4 @@ public class SignPsbtResult : SdkResult { public string? SignedPsbt; }
 public class CreateUtxosResult : SdkResult { public int UtxosCreated; }
 public class IssueAssetResult : SdkResult { public string? AssetId; }
 public class SendResult : SdkResult { public string? Txid; }
-public class SdkStatusResult { public bool SdkLoaded, WalletInitialized, HasMnemonic, Connected; }
+public class SdkStatusResult { public bool SdkLoaded, WalletInitialized, Connected; }

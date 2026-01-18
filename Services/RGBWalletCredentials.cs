@@ -6,5 +6,4 @@ public class RGBWalletCredentials
     public string XpubColored { get; set; } = "";
     public string MasterFingerprint { get; set; } = "";
     public string Network { get; set; } = "";
-    public string? Mnemonic { get; set; }
 }

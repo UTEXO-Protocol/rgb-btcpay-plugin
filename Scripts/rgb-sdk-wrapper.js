@@ -87,7 +87,6 @@ module.exports.getStatus = function(callback) {
         const status = {
             SdkLoaded: sdk !== null,
             WalletInitialized: walletManager !== null,
-            HasMnemonic: false,
             Connected: walletManager !== null
         };
         
@@ -107,7 +106,6 @@ module.exports.getStatus = function(callback) {
         callback(null, { 
             SdkLoaded: false, 
             WalletInitialized: false,
-            HasMnemonic: false,
             Connected: false,
             Error: e.message 
         });
