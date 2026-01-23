@@ -44,10 +44,12 @@ public class RGBAssetViewModel
 public class RGBIssueAssetViewModel : StoreViewModel
 {
     [Required, StringLength(8, MinimumLength = 2)]
+    [RegularExpression(@"^[A-Za-z0-9]+$", ErrorMessage = "Ticker must contain only letters and numbers")]
     [Display(Name = "Ticker")]
     public string Ticker { get; set; } = "";
     
     [Required, StringLength(64, MinimumLength = 1)]
+    [RegularExpression(@"^[A-Za-z0-9\s\-_\.]+$", ErrorMessage = "Name contains invalid characters")]
     [Display(Name = "Name")]
     public string Name { get; set; } = "";
     
