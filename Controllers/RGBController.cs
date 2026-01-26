@@ -40,7 +40,15 @@ public class RGBController : Controller
     {
         var wallet = await _wallets.GetWalletForStoreAsync(storeId);
         if (wallet == null)
-            return View("Setup", new RGBSetupViewModel { StoreId = storeId });
+        {
+            var rgbConfig = HttpContext.RequestServices.GetService<RGBConfiguration>();
+            return View("Setup", new RGBSetupViewModel 
+            { 
+                StoreId = storeId,
+                ElectrumUrl = rgbConfig?.ElectrumUrl ?? "N/A",
+                Network = rgbConfig?.Network ?? "unknown"
+            });
+        }
 
         var vm = new RGBIndexViewModel
         {
