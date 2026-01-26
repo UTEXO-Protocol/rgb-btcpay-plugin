@@ -4,16 +4,16 @@ using BTCPayServer.Abstractions.Models;
 using BTCPayServer.Abstractions.Services;
 using BTCPayServer.Configuration;
 using BTCPayServer.Payments;
-using BTCPayServer.Plugins.RGB.Data;
-using BTCPayServer.Plugins.RGB.PaymentHandler;
-using BTCPayServer.Plugins.RGB.Services;
+using BTCPayServer.Plugins.RgbUtexo.Data;
+using BTCPayServer.Plugins.RgbUtexo.PaymentHandler;
+using BTCPayServer.Plugins.RgbUtexo.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
 using System.Text.Json;
 
-namespace BTCPayServer.Plugins.RGB;
+namespace BTCPayServer.Plugins.RgbUtexo;
 
 public class RGBPlugin : BaseBTCPayServerPlugin
 {

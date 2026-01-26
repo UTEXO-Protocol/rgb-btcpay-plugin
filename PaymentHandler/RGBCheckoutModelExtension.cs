@@ -7,7 +7,7 @@ using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json.Linq;
 
-namespace BTCPayServer.Plugins.RGB.PaymentHandler;
+namespace BTCPayServer.Plugins.RgbUtexo.PaymentHandler;
 
 public class RGBCheckoutModelExtension : ICheckoutModelExtension
 {

@@ -1,10 +1,10 @@
-using BTCPayServer.Plugins.RGB.Data;
-using BTCPayServer.Plugins.RGB.Data.Entities;
+using BTCPayServer.Plugins.RgbUtexo.Data;
+using BTCPayServer.Plugins.RgbUtexo.Data.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
 
-namespace BTCPayServer.Plugins.RGB.Services;
+namespace BTCPayServer.Plugins.RgbUtexo.Services;
 
 public class RGBWalletService
 {

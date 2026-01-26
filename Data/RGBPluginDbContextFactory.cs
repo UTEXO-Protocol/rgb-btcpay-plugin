@@ -4,11 +4,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Infrastructure;
 
-namespace BTCPayServer.Plugins.RGB.Data;
+namespace BTCPayServer.Plugins.RgbUtexo.Data;
 
 public class RGBPluginDbContextFactory : BaseDbContextFactory<RGBPluginDbContext>
 {
-    public RGBPluginDbContextFactory(IOptions<DatabaseOptions> options) : base(options, "BTCPayServer.Plugins.RGB")
+    public RGBPluginDbContextFactory(IOptions<DatabaseOptions> options) : base(options, "BTCPayServer.Plugins.RgbUtexo")
     {
     }
 

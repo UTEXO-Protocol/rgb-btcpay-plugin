@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace BTCPayServer.Plugins.RGB.Models;
+namespace BTCPayServer.Plugins.RgbUtexo.Models;
 
 public abstract class StoreViewModel
 {

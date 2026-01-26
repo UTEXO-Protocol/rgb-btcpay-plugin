@@ -2,9 +2,9 @@ using System.Text.Json;
 using System.Threading.Channels;
 using BTCPayServer.Data;
 using BTCPayServer.Events;
-using BTCPayServer.Plugins.RGB.Data;
-using BTCPayServer.Plugins.RGB.Data.Entities;
-using BTCPayServer.Plugins.RGB.PaymentHandler;
+using BTCPayServer.Plugins.RgbUtexo.Data;
+using BTCPayServer.Plugins.RgbUtexo.Data.Entities;
+using BTCPayServer.Plugins.RgbUtexo.PaymentHandler;
 using BTCPayServer.Services.Invoices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -13,7 +13,7 @@ using Microsoft.Extensions.Logging;
 using NBitcoin;
 using NBXplorer;
 
-namespace BTCPayServer.Plugins.RGB.Services;
+namespace BTCPayServer.Plugins.RgbUtexo.Services;
 
 public class RGBInvoiceListener : IHostedService
 {

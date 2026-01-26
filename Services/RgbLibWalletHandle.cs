@@ -1,6 +1,6 @@
 using RgbLib;
 
-namespace BTCPayServer.Plugins.RGB.Services;
+namespace BTCPayServer.Plugins.RgbUtexo.Services;
 
 public class RgbLibWalletHandle : IDisposable
 {

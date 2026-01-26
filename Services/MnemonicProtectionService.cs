@@ -2,13 +2,13 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
 
-namespace BTCPayServer.Plugins.RGB.Services;
+namespace BTCPayServer.Plugins.RgbUtexo.Services;
 
 public class MnemonicProtectionService
 {
     readonly IDataProtector _protector;
     readonly ILogger<MnemonicProtectionService> _log;
-    const string Purpose = "BTCPayServer.Plugins.RGB.MnemonicProtection.v1";
+    const string Purpose = "BTCPayServer.Plugins.RgbUtexo.MnemonicProtection.v1";
 
     public MnemonicProtectionService(IDataProtectionProvider provider, ILogger<MnemonicProtectionService> log)
     {

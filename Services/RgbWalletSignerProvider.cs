@@ -1,11 +1,11 @@
 using System.Collections.Concurrent;
-using BTCPayServer.Plugins.RGB.Data;
+using BTCPayServer.Plugins.RgbUtexo.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using NBitcoin;
 
-namespace BTCPayServer.Plugins.RGB.Services;
+namespace BTCPayServer.Plugins.RgbUtexo.Services;
 
 public class RgbWalletSignerProvider : IHostedService, IRgbWalletSignerProvider
 {

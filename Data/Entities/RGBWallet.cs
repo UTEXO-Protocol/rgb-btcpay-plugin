@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace BTCPayServer.Plugins.RGB.Data.Entities;
+namespace BTCPayServer.Plugins.RgbUtexo.Data.Entities;
 
 public class RGBWallet
 {

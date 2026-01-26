@@ -3,12 +3,12 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using BTCPayServer.Plugins.RGB.Data;
+using BTCPayServer.Plugins.RgbUtexo.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using RgbLib;
 
-namespace BTCPayServer.Plugins.RGB.Services;
+namespace BTCPayServer.Plugins.RgbUtexo.Services;
 
 public class RgbLibService : IRgbLibService
 {

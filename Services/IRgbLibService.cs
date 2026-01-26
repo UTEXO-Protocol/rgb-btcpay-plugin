@@ -1,4 +1,4 @@
-namespace BTCPayServer.Plugins.RGB.Services;
+namespace BTCPayServer.Plugins.RgbUtexo.Services;
 
 public interface IRgbLibService : IDisposable
 {

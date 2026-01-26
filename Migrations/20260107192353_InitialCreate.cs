@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace BTCPayServer.Plugins.RGB.Migrations
+namespace BTCPayServer.Plugins.RgbUtexo.Migrations
 {
     /// <inheritdoc />
     public partial class InitialCreate : Migration

@@ -1,7 +1,7 @@
-using BTCPayServer.Plugins.RGB.Data.Entities;
+using BTCPayServer.Plugins.RgbUtexo.Data.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace BTCPayServer.Plugins.RGB.Data;
+namespace BTCPayServer.Plugins.RgbUtexo.Data;
 
 public class RGBPluginDbContext : DbContext
 {

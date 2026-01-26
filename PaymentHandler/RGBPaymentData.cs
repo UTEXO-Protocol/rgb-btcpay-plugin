@@ -1,4 +1,4 @@
-namespace BTCPayServer.Plugins.RGB.PaymentHandler;
+namespace BTCPayServer.Plugins.RgbUtexo.PaymentHandler;
 
 public class RGBPaymentData
 {

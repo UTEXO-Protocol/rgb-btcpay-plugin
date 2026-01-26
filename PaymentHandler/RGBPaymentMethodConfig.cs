@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace BTCPayServer.Plugins.RGB.PaymentHandler;
+namespace BTCPayServer.Plugins.RgbUtexo.PaymentHandler;
 
 public class RGBPaymentMethodConfig
 {

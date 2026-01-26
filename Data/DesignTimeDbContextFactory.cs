@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 
-namespace BTCPayServer.Plugins.RGB.Data;
+namespace BTCPayServer.Plugins.RgbUtexo.Data;
 
 public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<RGBPluginDbContext>
 {
@@ -11,7 +11,7 @@ public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<RGBPluginD
             ?? "Host=localhost;Database=btcpay_design;Username=postgres";
         
         var builder = new DbContextOptionsBuilder<RGBPluginDbContext>();
-        builder.UseNpgsql(connectionString, o => o.MigrationsAssembly("BTCPayServer.Plugins.RGB"));
+        builder.UseNpgsql(connectionString, o => o.MigrationsAssembly("BTCPayServer.Plugins.RgbUtexo"));
         
         return new RGBPluginDbContext(builder.Options);
     }

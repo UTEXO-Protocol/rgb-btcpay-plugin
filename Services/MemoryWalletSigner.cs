@@ -2,7 +2,7 @@ using System.Runtime.CompilerServices;
 using NBitcoin;
 using Microsoft.Extensions.Logging;
 
-namespace BTCPayServer.Plugins.RGB.Services;
+namespace BTCPayServer.Plugins.RgbUtexo.Services;
 
 public class MemoryWalletSigner : IRgbWalletSigner
 {

@@ -1,7 +1,7 @@
 using BTCPayServer.Abstractions.Contracts;
 using Microsoft.EntityFrameworkCore;
 
-namespace BTCPayServer.Plugins.RGB.Data;
+namespace BTCPayServer.Plugins.RgbUtexo.Data;
 
 public class RGBPluginMigrationRunner : IStartupTask
 {

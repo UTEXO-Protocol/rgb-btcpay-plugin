@@ -1,6 +1,6 @@
 using NBitcoin;
 
-namespace BTCPayServer.Plugins.RGB.Services;
+namespace BTCPayServer.Plugins.RgbUtexo.Services;
 
 public static class NetworkHelper
 {

@@ -3,11 +3,11 @@ using BTCPayServer.Abstractions.Extensions;
 using BTCPayServer.Client;
 using BTCPayServer.Data;
 using BTCPayServer.Payments;
-using BTCPayServer.Plugins.RGB.Data;
-using BTCPayServer.Plugins.RGB.Data.Entities;
-using BTCPayServer.Plugins.RGB.Models;
-using BTCPayServer.Plugins.RGB.PaymentHandler;
-using BTCPayServer.Plugins.RGB.Services;
+using BTCPayServer.Plugins.RgbUtexo.Data;
+using BTCPayServer.Plugins.RgbUtexo.Data.Entities;
+using BTCPayServer.Plugins.RgbUtexo.Models;
+using BTCPayServer.Plugins.RgbUtexo.PaymentHandler;
+using BTCPayServer.Plugins.RgbUtexo.Services;
 using BTCPayServer.Security;
 using BTCPayServer.Services.Invoices;
 using BTCPayServer.Services.Stores;
@@ -16,7 +16,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
-namespace BTCPayServer.Plugins.RGB.Controllers;
+namespace BTCPayServer.Plugins.RgbUtexo.Controllers;
 
 [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie)]
 [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]

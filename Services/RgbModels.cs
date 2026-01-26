@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace BTCPayServer.Plugins.RGB.Services;
+namespace BTCPayServer.Plugins.RgbUtexo.Services;
 
 public record BtcBalance(BalanceInfo Vanilla, BalanceInfo Colored);
 

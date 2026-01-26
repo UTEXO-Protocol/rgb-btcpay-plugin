@@ -1,12 +1,12 @@
 using BTCPayServer.Data;
 using BTCPayServer.Payments;
-using BTCPayServer.Plugins.RGB.Services;
+using BTCPayServer.Plugins.RgbUtexo.Services;
 using BTCPayServer.Services;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
-namespace BTCPayServer.Plugins.RGB.PaymentHandler;
+namespace BTCPayServer.Plugins.RgbUtexo.PaymentHandler;
 
 public class RGBPaymentMethodHandler : IPaymentMethodHandler
 {
