@@ -1,7 +1,9 @@
 using BTCPayServer.Data;
 using BTCPayServer.Payments;
 using BTCPayServer.Plugins.RgbUtexo.Services;
+using BTCPayServer.Rating;
 using BTCPayServer.Services;
+using BTCPayServer.Services.Rates;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -11,11 +13,21 @@ namespace BTCPayServer.Plugins.RgbUtexo.PaymentHandler;
 public class RGBPaymentMethodHandler : IPaymentMethodHandler
 {
     readonly RGBWalletService _wallets;
+    readonly RateFetcher _rateFetcher;
+    readonly DefaultRulesCollection _defaultRules;
     readonly ILogger<RGBPaymentMethodHandler> _log;
 
-    public RGBPaymentMethodHandler(RGBWalletService wallets, RGBConfiguration config, ILogger<RGBPaymentMethodHandler> log)
+    public RGBPaymentMethodHandler(
+        RGBWalletService wallets, 
+        RGBConfiguration config, 
+        RateFetcher rateFetcher,
+        DefaultRulesCollection defaultRules,
+        ILogger<RGBPaymentMethodHandler> log)
     {
-        _wallets = wallets; _log = log;
+        _wallets = wallets;
+        _rateFetcher = rateFetcher;
+        _defaultRules = defaultRules;
+        _log = log;
     }
 
     public PaymentMethodId PaymentMethodId => RGBPlugin.RGBPaymentMethodId;
@@ -56,9 +68,26 @@ public class RGBPaymentMethodHandler : IPaymentMethodHandler
             }
         }
 
+        var invoiceCurrency = ctx.InvoiceEntity.Currency;
         var invoicePrice = ctx.InvoiceEntity.Price;
+        
+        var (rate, rateSource) = await TryFetchRateAsync(ticker, invoiceCurrency, ctx.Store);
+        
         var multiplier = (decimal)Math.Pow(10, precision);
-        var units = invoicePrice > 0 ? (long)(invoicePrice * multiplier) : 1L;
+        decimal unitsDecimal;
+        if (rate > 0)
+        {
+            unitsDecimal = invoicePrice / rate * multiplier;
+        }
+        else
+        {
+            unitsDecimal = invoicePrice * multiplier;
+            rate = 1m;
+        }
+        var units = invoicePrice > 0 ? (long)Math.Ceiling(unitsDecimal) : 1L;
+        
+        _log.LogInformation("RGB invoice: {Price} {Currency} → {Units} {Ticker} (rate: {Rate} from {Source})", 
+            invoicePrice, invoiceCurrency, units, ticker, rate, rateSource);
 
         var expiration = ctx.InvoiceEntity.ExpirationTime - DateTimeOffset.UtcNow;
         var invoice = await _wallets.CreateInvoiceAsync(config.WalletId, assetId, units, expiration, ctx.InvoiceEntity.Id);
@@ -66,8 +95,8 @@ public class RGBPaymentMethodHandler : IPaymentMethodHandler
         ctx.Prompt.Currency = ticker;
         ctx.Prompt.Divisibility = precision;
         
-        ctx.InvoiceEntity.Rates[ticker] = 1m;
-        ctx.InvoiceEntity.Rates[$"{ticker}_{ctx.InvoiceEntity.Currency}"] = ctx.InvoiceEntity.Price;
+        ctx.InvoiceEntity.Rates[ticker] = rate;
+        ctx.InvoiceEntity.Rates[$"{ticker}_{invoiceCurrency}"] = rate;
 
         ctx.Prompt.Destination = invoice.Invoice;
         ctx.Prompt.PaymentMethodFee = 0m;
@@ -107,4 +136,36 @@ public class RGBPaymentMethodHandler : IPaymentMethodHandler
     object IPaymentMethodHandler.ParsePaymentDetails(JToken d) => ParsePaymentDetails(d);
 
     public void StripDetailsForNonOwner(object details) { }
+
+    async Task<(decimal Rate, string Source)> TryFetchRateAsync(string ticker, string invoiceCurrency, StoreData store)
+    {
+        try
+        {
+            var pair = new CurrencyPair(ticker, invoiceCurrency);
+            var storeBlob = store.GetStoreBlob();
+            var rateRules = storeBlob.GetRateRules(_defaultRules);
+            
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            
+            var result = await _rateFetcher.FetchRate(pair, rateRules, new StoreIdRateContext(store.Id), cts.Token);
+            
+            if (result.BidAsk != null && result.BidAsk.Bid > 0)
+            {
+                _log.LogInformation("Found exchange rate for {Pair}: {Rate}", pair, result.BidAsk.Bid);
+                return (result.BidAsk.Bid, result.Rule ?? "exchange");
+            }
+            
+            _log.LogInformation("No exchange rate found for {Pair}, using 1:1 fallback", pair);
+        }
+        catch (OperationCanceledException)
+        {
+            _log.LogWarning("Rate fetch timed out for {Ticker}/{Currency}, using 1:1 fallback", ticker, invoiceCurrency);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to fetch rate for {Ticker}/{Currency}, using 1:1 fallback", ticker, invoiceCurrency);
+        }
+        
+        return (1m, "fallback-1:1");
+    }
 }
