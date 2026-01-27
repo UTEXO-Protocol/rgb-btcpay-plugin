@@ -8,8 +8,8 @@
 
         <Product>RGB Payments</Product>
         <Description>Accept RGB (client-side validated assets) payments in BTCPay Server. Issue and receive RGB20 tokens on Bitcoin.</Description>
-        <Version>1.0.1</Version>
-        <Authors>ThunderStack</Authors>
+        <Version>1.0.2</Version>
+        <Authors>Utexo</Authors>
         <EmbedUntrackedSources>true</EmbedUntrackedSources>
         <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
         <GenerateRuntimeConfigDevFile>true</GenerateRuntimeConfigDevFile>
@@ -47,7 +47,7 @@
         <ProjectReference Include="submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj" Condition="Exists('submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj')" />
         <ProjectReference Include="../NArk/submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj" Condition="!Exists('submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj') And Exists('../NArk/submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj')" />
         
-        <PackageReference Include="RgbLib" Version="0.3.0-beta.8" />
+        <PackageReference Include="RgbLib" Version="0.3.0-beta.9" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.16">
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
