@@ -1,0 +1,9 @@
+@model BTCPayServer.Models.InvoicingModels.CheckoutModel
+@if (Model.PaymentMethodId?.Contains("RGB", StringComparison.OrdinalIgnoreCase) == true 
+    && string.Equals(Model.PaymentMethodCurrency, "RGB", StringComparison.OrdinalIgnoreCase))
+{
+<style>
+    #PaymentDetails-ExchangeRate { display: none !important; }
+    #PaymentDetails-TotalFiat { display: none !important; }
+</style>
+}

@@ -54,6 +54,7 @@ public class RGBPlugin : BaseBTCPayServerPlugin
         services.AddSingleton<RGBInvoiceListener>();
         services.AddHostedService(sp => sp.GetRequiredService<RGBInvoiceListener>());
         services.AddUIExtension("checkout-end", "RGB/RGBMethodCheckout");
+        services.AddUIExtension("checkout-end", "/Views/RGB/RGBCheckoutStyles.cshtml");
         services.AddUIExtension("store-wallets-nav", "/Views/RGB/RGBWalletNav.cshtml");
         services.AddDefaultPrettyName(RGBPaymentMethodId, "RGB");
     }
