@@ -49,6 +49,17 @@
                         </ul>
                     </div>
 
+                    <hr class="my-4" />
+                    <h5 class="mb-3"><i class="fa fa-cog"></i> Advanced Settings</h5>
+                    
+                    <div class="mb-3">
+                        <label asp-for="MaxAllocationsPerUtxo" class="form-label">Max Allocations per UTXO</label>
+                        <input asp-for="MaxAllocationsPerUtxo" class="form-control" type="number" min="1" max="50" style="max-width: 150px;" />
+                        <div class="form-text">
+                            Number of RGB allocations each UTXO can hold (1-50). Higher values = fewer UTXOs needed for receiving payments.
+                        </div>
+                    </div>
+
                     <button type="submit" class="btn btn-primary">
                         <span class="fa fa-wallet"></span> Create Wallet
                     </button>

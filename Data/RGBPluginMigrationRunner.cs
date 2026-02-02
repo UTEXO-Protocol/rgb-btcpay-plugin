@@ -16,6 +16,11 @@ public class RGBPluginMigrationRunner : IStartupTask
     {
         await using var ctx = _dbContextFactory.CreateContext();
         await ctx.Database.MigrateAsync(cancellationToken);
+        
+        await ctx.Database.ExecuteSqlRawAsync("""
+            ALTER TABLE "RGB_Wallets" 
+            ADD COLUMN IF NOT EXISTS "MaxAllocationsPerUtxo" integer NOT NULL DEFAULT 10
+            """, cancellationToken);
     }
 }
 

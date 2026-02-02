@@ -29,6 +29,7 @@ public class RGBWallet
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? LastSyncAt { get; set; }
     public bool IsActive { get; set; } = true;
+    public int MaxAllocationsPerUtxo { get; set; } = 10;
 }
 
 

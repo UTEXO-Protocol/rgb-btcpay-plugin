@@ -73,14 +73,15 @@ public class RgbLibService : IRgbLibService
                 dbWallet.XpubVanilla, 
                 dbWallet.XpubColored, 
                 dbWallet.MasterFingerprint,
-                dbWallet.Network)));
+                dbWallet.Network,
+                dbWallet.MaxAllocationsPerUtxo)));
 
         return lazyWallet.Value;
     }
 
-    RgbLibWalletHandle CreateWalletInternal(string walletId, string xpubVanilla, string xpubColored, string masterFingerprint, string walletNetwork)
+    RgbLibWalletHandle CreateWalletInternal(string walletId, string xpubVanilla, string xpubColored, string masterFingerprint, string walletNetwork, int maxAllocationsPerUtxo)
     {
-        _log.LogInformation("Lazy loading wallet {WalletId} on network {Network}", walletId, walletNetwork);
+        _log.LogInformation("Lazy loading wallet {WalletId} on network {Network} with max_allocations={MaxAlloc}", walletId, walletNetwork, maxAllocationsPerUtxo);
 
         var dataDir = Path.Combine(_config.RgbDataDir, walletId);
         Directory.CreateDirectory(dataDir);
@@ -92,7 +93,7 @@ public class RgbLibService : IRgbLibService
             ["data_dir"] = dataDir,
             ["bitcoin_network"] = NetworkHelper.MapNetworkToRgbLibFormat(walletNetwork),
             ["database_type"] = "Sqlite",
-            ["max_allocations_per_utxo"] = _config.MaxAllocationsPerUtxo,
+            ["max_allocations_per_utxo"] = maxAllocationsPerUtxo,
             ["account_xpub_vanilla"] = xpubVanilla,
             ["account_xpub_colored"] = xpubColored,
             ["mnemonic"] = null,

@@ -47,7 +47,7 @@ public class RGBConfiguration
     public string RgbDataDir { get; set; } = "/data/rgb-wallets";
 
     [JsonPropertyName("max_allocations_per_utxo")]
-    public int MaxAllocationsPerUtxo { get; set; } = 5;
+    public int MaxAllocationsPerUtxo { get; set; } = 10;
     
     [JsonPropertyName("proxy_endpoint")]
     public string ProxyEndpoint { get; set; } = "rpc://proxy.iriswallet.com/0.2/json-rpc";

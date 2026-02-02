@@ -120,10 +120,11 @@ public class RGBController : Controller
 
         try
         {
-            var wallet = await _wallets.CreateWalletAsync(storeId, model.WalletName, model.SelectedNetwork);
-            await EnableRgbPaymentMethod(storeId, wallet.Id);
+            var maxAlloc = model.MaxAllocationsPerUtxo > 0 ? model.MaxAllocationsPerUtxo : 10;
+            var wallet = await _wallets.CreateWalletAsync(storeId, model.WalletName, model.SelectedNetwork, maxAlloc);
+            await EnableRgbPaymentMethod(storeId, wallet.Id, maxAlloc);
 
-            TempData["SuccessMessage"] = $"RGB wallet created on {model.SelectedNetwork}!";
+            TempData["SuccessMessage"] = $"RGB wallet created on {model.SelectedNetwork} with max {maxAlloc} allocations per UTXO!";
             return RedirectToAction(nameof(Index), new { storeId });
         }
         catch (Exception ex)
@@ -224,15 +225,20 @@ public class RGBController : Controller
     }
 
     [HttpPost("utxos/create")]
-    public async Task<IActionResult> CreateUtxos(string storeId, int count = 5)
+    public async Task<IActionResult> CreateUtxos(string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
 
+        var store = await _stores.FindStore(storeId);
+        var config = GetRgbConfig(store);
+        var count = config?.UtxoCount ?? 4;
+        var size = config?.UtxoSize ?? 1000;
+
         try
         {
-            var created = await _wallets.CreateColorableUtxosAsync(wallet.Id, count);
-            TempData["SuccessMessage"] = created > 0 ? $"{created} UTXOs created" : "UTXOs already available";
+            var created = await _wallets.CreateColorableUtxosAsync(wallet.Id, count, size);
+            TempData["SuccessMessage"] = created > 0 ? $"{created} UTXOs created ({size} sats each)" : "UTXOs already available";
         }
         catch (Exception ex)
         {
@@ -316,7 +322,10 @@ public class RGBController : Controller
             CreatedAt = wallet.CreatedAt,
             DefaultAssetId = config?.DefaultAssetId,
             AcceptAnyAsset = config?.AcceptAnyAsset ?? false,
-            ElectrumUrl = networkSettings.ElectrumUrl
+            ElectrumUrl = networkSettings.ElectrumUrl,
+            UtxoCount = config?.UtxoCount ?? 4,
+            UtxoSize = config?.UtxoSize ?? 1000,
+            MaxAllocationsPerUtxo = config?.MaxAllocationsPerUtxo ?? 10
         };
 
         try
@@ -370,7 +379,10 @@ public class RGBController : Controller
         {
             WalletId = wallet.Id,
             DefaultAssetId = string.IsNullOrEmpty(model.DefaultAssetId) ? null : model.DefaultAssetId,
-            AcceptAnyAsset = model.AcceptAnyAsset
+            AcceptAnyAsset = model.AcceptAnyAsset,
+            UtxoCount = model.UtxoCount > 0 ? model.UtxoCount : 4,
+            UtxoSize = model.UtxoSize >= 546 ? model.UtxoSize : 1000,
+            MaxAllocationsPerUtxo = model.MaxAllocationsPerUtxo > 0 ? model.MaxAllocationsPerUtxo : 10
         };
 
         store.SetPaymentMethodConfig(_handlers[RGBPlugin.RGBPaymentMethodId], config);
@@ -396,10 +408,15 @@ public class RGBController : Controller
         return (balTask.Result, assetsTask.Result, addrTask.Result);
     }
 
-    async Task EnableRgbPaymentMethod(string storeId, string walletId)
+    async Task EnableRgbPaymentMethod(string storeId, string walletId, int? maxAllocationsPerUtxo = null)
     {
         var store = await _stores.FindStore(storeId) ?? throw new InvalidOperationException("Store not found");
-        store.SetPaymentMethodConfig(_handlers[RGBPlugin.RGBPaymentMethodId], new RGBPaymentMethodConfig { WalletId = walletId });
+        var config = new RGBPaymentMethodConfig 
+        { 
+            WalletId = walletId,
+            MaxAllocationsPerUtxo = maxAllocationsPerUtxo ?? 10
+        };
+        store.SetPaymentMethodConfig(_handlers[RGBPlugin.RGBPaymentMethodId], config);
         var blob = store.GetStoreBlob();
         blob.SetExcluded(RGBPlugin.RGBPaymentMethodId, false);
         store.SetStoreBlob(blob);

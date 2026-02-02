@@ -22,6 +22,10 @@ public class RGBSetupViewModel : StoreViewModel
     public string Network { get; set; } = "";
     
     public Dictionary<string, NetworkSettingsDto> AllNetworkSettings { get; set; } = new();
+    
+    [Display(Name = "Max Allocations per UTXO")]
+    [Range(1, 50)]
+    public int MaxAllocationsPerUtxo { get; set; } = 10;
 }
 
 public class NetworkSettingsDto
@@ -132,4 +136,16 @@ public class RGBSettingsViewModel : StoreViewModel
     public string ElectrumUrl { get; set; } = "";
     public bool IsConnected { get; set; }
     public string? ConnectionError { get; set; }
+    
+    [Display(Name = "UTXO Count")]
+    [Range(1, 20)]
+    public int UtxoCount { get; set; } = 4;
+    
+    [Display(Name = "UTXO Size (sats)")]
+    [Range(546, 100000)]
+    public int UtxoSize { get; set; } = 1000;
+    
+    [Display(Name = "Max Allocations per UTXO")]
+    [Range(1, 50)]
+    public int MaxAllocationsPerUtxo { get; set; } = 10;
 }

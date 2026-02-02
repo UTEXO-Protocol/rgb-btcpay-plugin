@@ -31,7 +31,7 @@ public class RGBWalletService
         _log = log;
     }
 
-    public async Task<RGBWallet> CreateWalletAsync(string storeId, string? name = null, string? selectedNetwork = null, CancellationToken ct = default)
+    public async Task<RGBWallet> CreateWalletAsync(string storeId, string? name = null, string? selectedNetwork = null, int? maxAllocationsPerUtxo = null, CancellationToken ct = default)
     {
         var walletNetwork = selectedNetwork ?? _cfg.Network;
         var keys = _rgbLib.GenerateKeys(walletNetwork);
@@ -47,7 +47,8 @@ public class RGBWalletService
             MasterFingerprint = keys.MasterFingerprint,
             EncryptedMnemonic = _mnemonicProtection.Protect(keys.Mnemonic),
             Network = walletNetwork,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = DateTimeOffset.UtcNow,
+            MaxAllocationsPerUtxo = maxAllocationsPerUtxo ?? _cfg.MaxAllocationsPerUtxo
         };
 
         await using var ctx = _db.CreateContext();
@@ -85,7 +86,7 @@ public class RGBWalletService
         return await _rgbLib.GetBtcBalanceAsync(walletId, ct);
     }
 
-    public async Task<int> CreateColorableUtxosAsync(string walletId, int count = 5, int size = 10000, CancellationToken ct = default)
+    public async Task<int> CreateColorableUtxosAsync(string walletId, int count = 4, int size = 1000, CancellationToken ct = default)
     {
         await GetWalletOrThrow(walletId, ct);
         var network = NetworkHelper.GetNetwork(_cfg.Network);
