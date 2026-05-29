@@ -16,7 +16,7 @@ public class RGBSetupViewModel : StoreViewModel
     [Display(Name = "Network")]
     public string SelectedNetwork { get; set; } = "";
 
-    public string[] AvailableNetworks { get; set; } = ["regtest", "testnet", "signet", "mainnet"];
+    public string[] AvailableNetworks { get; set; } = ["regtest", "testnet", "signet", "utexo", "mainnet"];
 
     public string ElectrumUrl { get; set; } = "";
     public string ProxyEndpoint { get; set; } = "";

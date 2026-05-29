@@ -8,7 +8,7 @@ public static class NetworkHelper
     {
         "mainnet" or "main" => Network.Main,
         "testnet" or "test" => Network.TestNet,
-        "signet" => Network.GetNetwork("signet") ?? Network.TestNet,
+        "signet" or "utexo" => Network.GetNetwork("signet") ?? Network.TestNet,
         _ => Network.RegTest
     };
 
@@ -16,7 +16,7 @@ public static class NetworkHelper
     {
         "mainnet" or "main" => "Mainnet",
         "testnet" or "test" => "Testnet",
-        "signet" => "Signet",
+        "signet" or "utexo" => "Signet",
         _ => "Regtest"
     };
 }

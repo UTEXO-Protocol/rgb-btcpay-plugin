@@ -28,6 +28,11 @@ public class NetworkSettings
         {
             ElectrumUrl = "ssl://electrum.iriswallet.com:50033",
             ProxyEndpoint = "rpcs://proxy.iriswallet.com/0.2/json-rpc"
+        },
+        ["utexo"] = new NetworkSettings
+        {
+            ElectrumUrl = "tcp://esplora-api.utexo.com:50001",
+            ProxyEndpoint = "rpcs://rgb-proxy.utexo.com/json-rpc"
         }
     };
 
@@ -39,7 +44,11 @@ public class NetworkSettings
         return settings;
     }
 
-    public static string[] AvailableNetworks => ["regtest", "testnet", "signet", "mainnet"];
+    public static string[] AvailableNetworks => ["regtest", "testnet", "signet", "utexo", "mainnet"];
+
+    public static bool AllowsPlainElectrum(string network) =>
+        network.Equals("regtest", StringComparison.OrdinalIgnoreCase)
+        || network.Equals("utexo", StringComparison.OrdinalIgnoreCase);
 }
 
 public class RGBConfiguration
@@ -88,6 +97,7 @@ public class RGBConfiguration
         "mainnet" or "main" => "Main",
         "testnet" => "TestNet",
         "signet" => "Signet",
+        "utexo" => "Utexo",
         "regtest" => "RegTest",
         _ => throw new ArgumentException($"Unknown RGB network: {network}")
     };

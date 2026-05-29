@@ -125,13 +125,29 @@ public class RGBController : Controller
     }
     
     internal static string MapChainNameToRgbNetwork(ChainName chainName)
+        => AllowedRgbNetworksFor(chainName)[0];
+
+    internal static string[] AllowedRgbNetworksFor(ChainName chainName)
     {
         var name = chainName.ToString();
-        if (name.Equals("Mainnet", StringComparison.OrdinalIgnoreCase)) return "mainnet";
-        if (name.Equals("Testnet", StringComparison.OrdinalIgnoreCase)) return "testnet";
-        if (name.Equals("Regtest", StringComparison.OrdinalIgnoreCase)) return "regtest";
-        if (name.Equals("Signet", StringComparison.OrdinalIgnoreCase)) return "signet";
+        if (name.Equals("Mainnet", StringComparison.OrdinalIgnoreCase)) return ["mainnet"];
+        if (name.Equals("Testnet", StringComparison.OrdinalIgnoreCase)) return ["testnet"];
+        if (name.Equals("Regtest", StringComparison.OrdinalIgnoreCase)) return ["regtest"];
+        if (name.Equals("Signet",  StringComparison.OrdinalIgnoreCase)) return ["signet", "utexo"];
         throw new InvalidOperationException($"Unsupported BTCPay network type: {name}");
+    }
+
+    internal static string? ValidateSelectedNetwork(string? selectedNetwork, ChainName chainName)
+    {
+        if (string.IsNullOrWhiteSpace(selectedNetwork)
+            || !NetworkSettings.AvailableNetworks.Contains(selectedNetwork, StringComparer.OrdinalIgnoreCase))
+            return "Invalid network selection";
+
+        var allowed = AllowedRgbNetworksFor(chainName);
+        if (!allowed.Contains(selectedNetwork, StringComparer.OrdinalIgnoreCase))
+            return $"Wallet network '{selectedNetwork}' is not allowed for BTCPay deployment network '{chainName}' (allowed: {string.Join(", ", allowed)})";
+
+        return null;
     }
 
     static Dictionary<string, NetworkSettingsDto> BuildAllNetworkSettings()
@@ -164,19 +180,10 @@ public class RGBController : Controller
             return View("Setup", model);
         }
 
-        if (string.IsNullOrWhiteSpace(model.SelectedNetwork)
-            || !NetworkSettings.AvailableNetworks.Contains(model.SelectedNetwork, StringComparer.OrdinalIgnoreCase))
+        var networkError = ValidateSelectedNetwork(model.SelectedNetwork, _btcPayOptions.NetworkType);
+        if (networkError != null)
         {
-            TempData[WellKnownTempData.ErrorMessage] = "Invalid network selection";
-            model.AvailableNetworks = NetworkSettings.AvailableNetworks;
-            return View("Setup", model);
-        }
-
-        var expectedNetwork = MapChainNameToRgbNetwork(_btcPayOptions.NetworkType);
-        if (!string.Equals(model.SelectedNetwork, expectedNetwork, StringComparison.OrdinalIgnoreCase))
-        {
-            TempData[WellKnownTempData.ErrorMessage] =
-                $"Wallet network '{model.SelectedNetwork}' does not match BTCPay deployment network '{expectedNetwork}'";
+            TempData[WellKnownTempData.ErrorMessage] = networkError;
             model.AvailableNetworks = NetworkSettings.AvailableNetworks;
             return View("Setup", model);
         }
@@ -230,20 +237,10 @@ public class RGBController : Controller
             return View("Setup", model);
         }
 
-        if (string.IsNullOrWhiteSpace(model.SelectedNetwork)
-            || !NetworkSettings.AvailableNetworks.Contains(model.SelectedNetwork, StringComparer.OrdinalIgnoreCase))
+        var networkError = ValidateSelectedNetwork(model.SelectedNetwork, _btcPayOptions.NetworkType);
+        if (networkError != null)
         {
-            TempData[WellKnownTempData.ErrorMessage] = "Invalid network selection";
-            model.IsRestore = true;
-            PopulateSetupModel(model);
-            return View("Setup", model);
-        }
-
-        var restoreExpectedNetwork = MapChainNameToRgbNetwork(_btcPayOptions.NetworkType);
-        if (!string.Equals(model.SelectedNetwork, restoreExpectedNetwork, StringComparison.OrdinalIgnoreCase))
-        {
-            TempData[WellKnownTempData.ErrorMessage] =
-                $"Wallet network '{model.SelectedNetwork}' does not match BTCPay deployment network '{restoreExpectedNetwork}'";
+            TempData[WellKnownTempData.ErrorMessage] = networkError;
             model.IsRestore = true;
             PopulateSetupModel(model);
             return View("Setup", model);
@@ -328,20 +325,10 @@ public class RGBController : Controller
             return View("Setup", model);
         }
 
-        if (string.IsNullOrWhiteSpace(model.SelectedNetwork)
-            || !NetworkSettings.AvailableNetworks.Contains(model.SelectedNetwork, StringComparer.OrdinalIgnoreCase))
+        var networkError = ValidateSelectedNetwork(model.SelectedNetwork, _btcPayOptions.NetworkType);
+        if (networkError != null)
         {
-            TempData[WellKnownTempData.ErrorMessage] = "Invalid network selection";
-            model.IsBackupRestore = true;
-            PopulateSetupModel(model);
-            return View("Setup", model);
-        }
-
-        var backupExpectedNetwork = MapChainNameToRgbNetwork(_btcPayOptions.NetworkType);
-        if (!string.Equals(model.SelectedNetwork, backupExpectedNetwork, StringComparison.OrdinalIgnoreCase))
-        {
-            TempData[WellKnownTempData.ErrorMessage] =
-                $"Wallet network '{model.SelectedNetwork}' does not match BTCPay deployment network '{backupExpectedNetwork}'";
+            TempData[WellKnownTempData.ErrorMessage] = networkError;
             model.IsBackupRestore = true;
             PopulateSetupModel(model);
             return View("Setup", model);

@@ -581,9 +581,9 @@ public class RGBWalletService : IRGBWalletService
         }
 
         var networkSettings = RGBConfiguration.GetNetworkSettings(wallet.Network);
-        var isRegtest = wallet.Network.Equals("regtest", StringComparison.OrdinalIgnoreCase);
+        var allowsPlainElectrum = NetworkSettings.AllowsPlainElectrum(wallet.Network);
         using var electrum = new ElectrumClient();
-        await electrum.ConnectAsync(networkSettings.ElectrumUrl, ct, allowInsecure: isRegtest);
+        await electrum.ConnectAsync(networkSettings.ElectrumUrl, ct, allowInsecure: allowsPlainElectrum);
 
         var rawTxCache = new Dictionary<string, Transaction>();
         foreach (var utxo in selected)
@@ -737,9 +737,9 @@ public class RGBWalletService : IRGBWalletService
             var rawTx = psbtObj.ExtractTransaction();
 
             var networkSettings = RGBConfiguration.GetNetworkSettings(wallet.Network);
-            var isRegtestElectrum = wallet.Network.Equals("regtest", StringComparison.OrdinalIgnoreCase);
+            var allowsPlainElectrum = NetworkSettings.AllowsPlainElectrum(wallet.Network);
             using var electrum = new ElectrumClient();
-            await electrum.ConnectAsync(networkSettings.ElectrumUrl, ct, allowInsecure: isRegtestElectrum);
+            await electrum.ConnectAsync(networkSettings.ElectrumUrl, ct, allowInsecure: allowsPlainElectrum);
             await electrum.BroadcastTransactionAsync(rawTx.ToHex(), ct);
         }
         catch (Exception ex)
