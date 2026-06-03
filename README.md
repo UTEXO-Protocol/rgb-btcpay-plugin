@@ -233,7 +233,7 @@ This plugin implements a **server-side custodial hot-wallet**. The BTCPay server
 
 > **Important:** This is custodial software. If the server is compromised, wallet funds are at risk. For production deployments, ensure your BTCPay server is properly secured. Back up your DataProtection key ring — losing it means losing access to all encrypted mnemonics.
 
-### RGB Send Signing Trust Boundary
+### Known Notice: RGB Send Intent Verification
 
 Before signing a PSBT, the plugin applies local BTC-level policy checks:
 
@@ -246,6 +246,8 @@ Before signing a PSBT, the plugin applies local BTC-level policy checks:
 These checks reduce the blast radius of a malformed PSBT, but RGB transfer construction is still trusted to `rgb-lib`. The signer does not independently verify that the unsigned PSBT encodes the expected RGB asset ID, RGB amount, recipient ID, or state-transition commitment. A compromised or malicious `rgb-lib` could construct a PSBT that passes the BTC-level checks while violating the intended RGB transfer semantics.
 
 This is an explicit trust boundary: the plugin verifies the Bitcoin transaction policy locally and relies on `rgb-lib` for RGB state-transition correctness.
+
+Closing this boundary requires a pre-signing RGB intent verifier. The verifier should inspect the `rgb-lib` transfer staging metadata created by `send_begin` and confirm that the staged transfer matches the operator action before the signer signs: expected asset ID, amount, recipient ID, validated transport endpoints, and no unexpected extra RGB recipients. Until that exists, the plugin should be treated as protected against unauthorized BTC outputs, but still dependent on `rgb-lib` for RGB send correctness.
 
 A non-custodial mode with external signer support (offline PSBT signing, hardware wallet integration) is planned for a future release.
 
