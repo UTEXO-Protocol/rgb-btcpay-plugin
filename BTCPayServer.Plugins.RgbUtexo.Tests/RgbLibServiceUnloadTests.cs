@@ -54,7 +54,7 @@ public class RgbLibServiceUnloadTests
         });
         wallets["w"] = lazy;
 
-        var construction = Task.Run(() => { try { _ = lazy.Value; } catch { } });
+        var construction = Task.Run(() => { _ = lazy.Value; });
         Assert.True(factoryEntered.Wait(TimeSpan.FromSeconds(2)));
 
         var sw = Stopwatch.StartNew();
@@ -85,7 +85,7 @@ public class RgbLibServiceUnloadTests
         });
         wallets["w"] = lazy;
 
-        var construction = Task.Run(() => { try { _ = lazy.Value; } catch { } });
+        var construction = Task.Run(() => { _ = lazy.Value; });
         Assert.True(factoryEntered.Wait(TimeSpan.FromSeconds(2)));
 
         RgbLibService.UnloadFromCache(wallets, "w", null);
@@ -118,7 +118,7 @@ public class RgbLibServiceUnloadTests
         var wallets = new ConcurrentDictionary<string, Lazy<RgbLibWalletHandle>>();
         var lazy = new Lazy<RgbLibWalletHandle>(() => throw new InvalidOperationException("boom"));
         wallets["w"] = lazy;
-        try { _ = lazy.Value; } catch { }
+        try { _ = lazy.Value; } catch (InvalidOperationException) { }
 
         RgbLibService.UnloadFromCache(wallets, "w", null);
 
