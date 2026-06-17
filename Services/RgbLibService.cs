@@ -156,7 +156,7 @@ public class RgbLibService : IRgbLibService
         {
             handle = lazy.Value;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException and not AccessViolationException and not AppDomainUnloadedException and not BadImageFormatException)
         {
             log?.LogDebug(ex, "Wallet {WalletId} construction had failed; removing cache entry", walletId);
             wallets.TryRemove(new KeyValuePair<string, Lazy<RgbLibWalletHandle>>(walletId, lazy));
