@@ -130,18 +130,38 @@ public class RgbLibService : IRgbLibService
         wallet.GoOnline(networkSettings.ElectrumUrl, true);
 
         _log.LogInformation("Wallet {WalletId} connected to {Electrum}", walletId, networkSettings.ElectrumUrl);
-        return new RgbLibWalletHandle(wallet, walletId);
+        return new RgbLibWalletHandle(wallet, walletId, _log);
     }
 
     public void UnloadWallet(string walletId)
     {
-        if (_wallets.TryRemove(walletId, out var lazy))
+        if (!_wallets.TryGetValue(walletId, out var lazy))
+            return;
+
+        RgbLibWalletHandle handle;
+        try
         {
-            if (lazy.IsValueCreated)
-            {
-                lazy.Value.Dispose();
-                _log.LogInformation("Wallet {WalletId} unloaded", walletId);
-            }
+            handle = lazy.Value;
+        }
+        catch (Exception ex)
+        {
+            _log.LogDebug(ex, "Wallet {WalletId} construction had failed; removing cache entry", walletId);
+            _wallets.TryRemove(new KeyValuePair<string, Lazy<RgbLibWalletHandle>>(walletId, lazy));
+            return;
+        }
+
+        handle.Dispose();
+
+        if (handle.NativeWalletFreed)
+        {
+            _wallets.TryRemove(new KeyValuePair<string, Lazy<RgbLibWalletHandle>>(walletId, lazy));
+            _log.LogInformation("Wallet {WalletId} unloaded", walletId);
+        }
+        else
+        {
+            _log.LogWarning(
+                "Wallet {WalletId} unload timed out with an operation still running; native wallet leaked and the handle is kept cached to prevent a second instance on the same data dir. Restart required to reclaim it.",
+                walletId);
         }
     }
 
