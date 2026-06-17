@@ -206,7 +206,7 @@ public class RGBController : Controller
 
         try
         {
-            var maxAlloc = model.MaxAllocationsPerUtxo > 0 ? model.MaxAllocationsPerUtxo : 10;
+            var maxAlloc = RGBWalletService.ResolveAllocationsPerUtxo(model.MaxAllocationsPerUtxo);
             var wallet = await _wallets.CreateWalletAsync(storeId, model.SelectedNetwork, model.WalletName, maxAlloc);
 
             var store = await _stores.FindStore(storeId);
@@ -264,7 +264,7 @@ public class RGBController : Controller
 
         try
         {
-            var maxAlloc = model.MaxAllocationsPerUtxo > 0 ? model.MaxAllocationsPerUtxo : 10;
+            var maxAlloc = RGBWalletService.ResolveAllocationsPerUtxo(model.MaxAllocationsPerUtxo);
             var wallet = await _wallets.RestoreWalletAsync(storeId, model.Mnemonic!.Trim(), model.SelectedNetwork, model.WalletName, maxAlloc);
 
             var store = await _stores.FindStore(storeId);
@@ -358,7 +358,7 @@ public class RGBController : Controller
                 await model.BackupFile.CopyToAsync(stream);
             }
 
-            var maxAlloc = model.MaxAllocationsPerUtxo > 0 ? model.MaxAllocationsPerUtxo : 10;
+            var maxAlloc = RGBWalletService.ResolveAllocationsPerUtxo(model.MaxAllocationsPerUtxo);
             var wallet = await _wallets.RestoreFromBackupAsync(
                 storeId, model.Mnemonic!.Trim(), tempPath, model.BackupPassword,
                 model.SelectedNetwork, model.WalletName, maxAlloc);

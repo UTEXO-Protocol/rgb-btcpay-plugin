@@ -40,6 +40,12 @@ public class RGBPluginMigrationRunner : IStartupTask
             """, cancellationToken);
 
         await ctx.Database.ExecuteSqlRawAsync("""
+            UPDATE "RGB_Wallets"
+            SET "MaxAllocationsPerUtxo" = LEAST(GREATEST("MaxAllocationsPerUtxo", 1), 50)
+            WHERE "MaxAllocationsPerUtxo" < 1 OR "MaxAllocationsPerUtxo" > 50
+            """, cancellationToken);
+
+        await ctx.Database.ExecuteSqlRawAsync("""
             ALTER TABLE "RGB_Assets" DROP CONSTRAINT IF EXISTS "PK_RGB_Assets";
             ALTER TABLE "RGB_Assets" ADD CONSTRAINT "PK_RGB_Assets" PRIMARY KEY ("WalletId", "AssetId");
             """, cancellationToken);

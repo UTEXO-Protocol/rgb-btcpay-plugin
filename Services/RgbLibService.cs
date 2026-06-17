@@ -82,7 +82,7 @@ public class RgbLibService : IRgbLibService
                 dbWallet.XpubColored, 
                 dbWallet.MasterFingerprint,
                 dbWallet.Network,
-                dbWallet.MaxAllocationsPerUtxo)));
+                RGBWalletService.ResolveAllocationsPerUtxo(dbWallet.MaxAllocationsPerUtxo))));
 
         return lazyWallet.Value;
     }

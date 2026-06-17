@@ -42,6 +42,15 @@ public class RGBWalletService : IRGBWalletService
         _log = log;
     }
 
+    public const int MinAllocationsPerUtxo = 1;
+    public const int MaxAllocationsPerUtxoLimit = 50;
+    public const int DefaultAllocationsPerUtxo = 10;
+
+    public static int ResolveAllocationsPerUtxo(int? requested) =>
+        requested is > 0
+            ? Math.Clamp(requested.Value, MinAllocationsPerUtxo, MaxAllocationsPerUtxoLimit)
+            : DefaultAllocationsPerUtxo;
+
     public async Task<RGBWallet> CreateWalletAsync(string storeId, string selectedNetwork, string? name = null, int? maxAllocationsPerUtxo = null, CancellationToken ct = default)
     {
         var walletNetwork = selectedNetwork;
@@ -59,7 +68,7 @@ public class RGBWalletService : IRGBWalletService
             EncryptedMnemonic = _mnemonicProtection.Protect(keys.Mnemonic),
             Network = walletNetwork,
             CreatedAt = DateTimeOffset.UtcNow,
-            MaxAllocationsPerUtxo = maxAllocationsPerUtxo ?? _cfg.MaxAllocationsPerUtxo
+            MaxAllocationsPerUtxo = ResolveAllocationsPerUtxo(maxAllocationsPerUtxo ?? _cfg.MaxAllocationsPerUtxo)
         };
 
         await using (var ctx = _db.CreateContext())
@@ -96,7 +105,7 @@ public class RGBWalletService : IRGBWalletService
             EncryptedMnemonic = _mnemonicProtection.Protect(mnemonic),
             Network = walletNetwork,
             CreatedAt = DateTimeOffset.UtcNow,
-            MaxAllocationsPerUtxo = maxAllocationsPerUtxo ?? _cfg.MaxAllocationsPerUtxo
+            MaxAllocationsPerUtxo = ResolveAllocationsPerUtxo(maxAllocationsPerUtxo ?? _cfg.MaxAllocationsPerUtxo)
         };
 
         await using (var ctx = _db.CreateContext())
@@ -439,7 +448,7 @@ public class RGBWalletService : IRGBWalletService
             EncryptedMnemonic = _mnemonicProtection.Protect(mnemonic),
             Network = walletNetwork,
             CreatedAt = DateTimeOffset.UtcNow,
-            MaxAllocationsPerUtxo = maxAllocationsPerUtxo ?? _cfg.MaxAllocationsPerUtxo
+            MaxAllocationsPerUtxo = ResolveAllocationsPerUtxo(maxAllocationsPerUtxo ?? _cfg.MaxAllocationsPerUtxo)
         };
 
         var walletDataDir = _rgbLib.GetWalletDataDir(wallet.Id, walletNetwork);
