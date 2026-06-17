@@ -133,11 +133,24 @@ public class RgbLibService : IRgbLibService
         return new RgbLibWalletHandle(wallet, walletId, _log);
     }
 
-    public void UnloadWallet(string walletId)
+    public void UnloadWallet(string walletId) => UnloadFromCache(_wallets, walletId, _log);
+
+    internal static void UnloadFromCache(ConcurrentDictionary<string, Lazy<RgbLibWalletHandle>> wallets, string walletId, ILogger? log)
     {
-        if (!_wallets.TryGetValue(walletId, out var lazy))
+        if (!wallets.TryGetValue(walletId, out var lazy))
             return;
 
+        if (lazy.IsValueCreated)
+        {
+            DisposeAndEvict(wallets, walletId, lazy, log);
+            return;
+        }
+
+        Task.Run(() => DisposeAndEvict(wallets, walletId, lazy, log));
+    }
+
+    static void DisposeAndEvict(ConcurrentDictionary<string, Lazy<RgbLibWalletHandle>> wallets, string walletId, Lazy<RgbLibWalletHandle> lazy, ILogger? log)
+    {
         RgbLibWalletHandle handle;
         try
         {
@@ -145,8 +158,8 @@ public class RgbLibService : IRgbLibService
         }
         catch (Exception ex)
         {
-            _log.LogDebug(ex, "Wallet {WalletId} construction had failed; removing cache entry", walletId);
-            _wallets.TryRemove(new KeyValuePair<string, Lazy<RgbLibWalletHandle>>(walletId, lazy));
+            log?.LogDebug(ex, "Wallet {WalletId} construction had failed; removing cache entry", walletId);
+            wallets.TryRemove(new KeyValuePair<string, Lazy<RgbLibWalletHandle>>(walletId, lazy));
             return;
         }
 
@@ -154,12 +167,12 @@ public class RgbLibService : IRgbLibService
 
         if (handle.NativeWalletFreed)
         {
-            _wallets.TryRemove(new KeyValuePair<string, Lazy<RgbLibWalletHandle>>(walletId, lazy));
-            _log.LogInformation("Wallet {WalletId} unloaded", walletId);
+            wallets.TryRemove(new KeyValuePair<string, Lazy<RgbLibWalletHandle>>(walletId, lazy));
+            log?.LogInformation("Wallet {WalletId} unloaded", walletId);
         }
         else
         {
-            _log.LogWarning(
+            log?.LogWarning(
                 "Wallet {WalletId} unload timed out with an operation still running; native wallet leaked and the handle is kept cached to prevent a second instance on the same data dir. Restart required to reclaim it.",
                 walletId);
         }
