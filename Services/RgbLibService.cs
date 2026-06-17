@@ -173,8 +173,33 @@ public class RgbLibService : IRgbLibService
         else
         {
             log?.LogWarning(
-                "Wallet {WalletId} unload timed out with an operation still running; native wallet leaked and the handle is kept cached to prevent a second instance on the same data dir. Restart required to reclaim it.",
+                "Wallet {WalletId} unload timed out with an operation still running; native wallet will be freed after the operation completes",
                 walletId);
+            Task.Run(() => CompleteTimedOutDisposeAndEvict(wallets, walletId, lazy, handle, log));
+        }
+    }
+
+    static void CompleteTimedOutDisposeAndEvict(
+        ConcurrentDictionary<string, Lazy<RgbLibWalletHandle>> wallets,
+        string walletId,
+        Lazy<RgbLibWalletHandle> lazy,
+        RgbLibWalletHandle handle,
+        ILogger? log)
+    {
+        try
+        {
+            handle.CompleteTimedOutDispose();
+        }
+        catch (Exception ex)
+        {
+            log?.LogWarning(ex, "Wallet {WalletId} deferred unload failed; restart required to reclaim it", walletId);
+            return;
+        }
+
+        if (handle.NativeWalletFreed)
+        {
+            wallets.TryRemove(new KeyValuePair<string, Lazy<RgbLibWalletHandle>>(walletId, lazy));
+            log?.LogInformation("Wallet {WalletId} deferred unload completed", walletId);
         }
     }
 

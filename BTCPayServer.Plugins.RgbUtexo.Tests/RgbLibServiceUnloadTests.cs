@@ -126,7 +126,7 @@ public class RgbLibServiceUnloadTests
     }
 
     [Fact]
-    public async Task Unload_KeepsCached_WhenDisposeTimesOut()
+    public async Task Unload_DeferredEvicts_WhenDisposeTimesOutThenOperationCompletes()
     {
         var wallets = new ConcurrentDictionary<string, Lazy<RgbLibWalletHandle>>();
         wallets["w"] = Created(out var handle);
@@ -147,6 +147,14 @@ public class RgbLibServiceUnloadTests
 
         gate.Set();
         await opTask;
+
+        Assert.True(SpinUntil(() => handle.NativeWalletFreed), "timed-out unload did not finish after operation completed");
+        Assert.True(handle.NativeDisposeCalled);
+        Assert.True(SpinUntil(() => !wallets.ContainsKey("w")), "freed timed-out handle stayed cached");
+
+        var replacement = Created(out var replacementHandle);
+        Assert.Same(replacement, wallets.GetOrAdd("w", replacement));
+        Assert.NotSame(handle, replacementHandle);
     }
 
     [Fact]

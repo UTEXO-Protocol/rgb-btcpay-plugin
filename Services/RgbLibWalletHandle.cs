@@ -74,6 +74,24 @@ public class RgbLibWalletHandle : IDisposable
         _wallet = null;
     }
 
+    internal void CompleteTimedOutDispose()
+    {
+        if (NativeWalletFreed) return;
+
+        _semaphore.Wait();
+        try
+        {
+            if (_nativeWalletFreed) return;
+
+            DisposeNativeWallet();
+            _nativeWalletFreed = true;
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposeStarted, 1) != 0) return;
