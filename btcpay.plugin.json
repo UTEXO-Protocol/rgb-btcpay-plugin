@@ -6,7 +6,7 @@
   "version": "1.0.8",
   "author": "Utexo",
   "authorLink": "https://utexo.com",
-  "projectUrl": "https://github.com/UTEXO-Protocol/utexo-btcpay-plugin",
+  "projectUrl": "https://github.com/UTEXO-Protocol/rgb-btcpay-plugin",
   "pluginDependencies": [],
   "systemPlugin": false
 }
