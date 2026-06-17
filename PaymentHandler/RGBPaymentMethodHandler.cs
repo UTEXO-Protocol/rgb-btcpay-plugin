@@ -48,6 +48,9 @@ public class RGBPaymentMethodHandler : IPaymentMethodHandler
         if (wallet == null)
             throw new PaymentMethodUnavailableException("RGB wallet missing");
 
+        if (!WalletBelongsToStore(wallet.StoreId, ctx.Store.Id))
+            throw new PaymentMethodUnavailableException("RGB wallet does not belong to this store");
+
         if (string.IsNullOrEmpty(config.DefaultAssetId))
             throw new PaymentMethodUnavailableException(
                 "Select a default RGB asset in store Settings to accept payments");
@@ -125,6 +128,11 @@ public class RGBPaymentMethodHandler : IPaymentMethodHandler
     public RGBPaymentData ParsePaymentDetails(JToken d) =>
         d.ToObject<RGBPaymentData>(Serializer) ?? throw new FormatException("bad payment");
     object IPaymentMethodHandler.ParsePaymentDetails(JToken d) => ParsePaymentDetails(d);
+
+    public static bool WalletBelongsToStore(string? walletStoreId, string? expectedStoreId) =>
+        !string.IsNullOrEmpty(walletStoreId)
+        && !string.IsNullOrEmpty(expectedStoreId)
+        && walletStoreId == expectedStoreId;
 
     public void StripDetailsForNonOwner(object details)
     {

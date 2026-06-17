@@ -112,6 +112,10 @@ public class RGBPluginMigrationRunner : IStartupTask
                 if (config == null || string.IsNullOrEmpty(config.WalletId))
                     continue;
 
+                var wallet = await ctx.RGBWallets.FindAsync([config.WalletId], ct);
+                if (!RGBPaymentMethodHandler.WalletBelongsToStore(wallet?.StoreId, store.Id))
+                    continue;
+
                 var assets = await ctx.RGBAssets.Where(a => a.WalletId == config.WalletId).ToListAsync(ct);
                 var count = 0;
                 foreach (var a in assets)
@@ -152,6 +156,10 @@ public class RGBPluginMigrationRunner : IStartupTask
                 if (config == null || string.IsNullOrEmpty(config.WalletId))
                     continue;
                 if (!string.IsNullOrEmpty(config.DefaultAssetId))
+                    continue;
+
+                var wallet = await ctx.RGBWallets.FindAsync([config.WalletId], ct);
+                if (!RGBPaymentMethodHandler.WalletBelongsToStore(wallet?.StoreId, store.Id))
                     continue;
 
                 var approvedCount = await ctx.RGBAssets

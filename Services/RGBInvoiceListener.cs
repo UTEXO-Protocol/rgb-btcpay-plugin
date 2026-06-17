@@ -128,7 +128,7 @@ public class RGBInvoiceListener : IHostedService
                 await _wallets.RefreshWalletAsync(w.Id);
                 await CleanupExpiredTransfers(w, ct);
                 _log.LogInformation("Wallet {WalletId} refreshed, processing transfers...", w.Id);
-                await ProcessTransfers(w.Id, ct);
+                await ProcessTransfers(w.Id, w.StoreId, ct);
                 await ProcessAssetDiscoveryInvoices(w.Id, ct);
             }
             catch (Exception ex)
@@ -200,12 +200,19 @@ public class RGBInvoiceListener : IHostedService
         }
     }
 
-    async Task ProcessTransfers(string walletId, CancellationToken ct)
+    async Task ProcessTransfers(string walletId, string expectedStoreId, CancellationToken ct)
     {
         await using var ctx = _db.CreateContext();
 
         var wallet = await ctx.RGBWallets.FindAsync(walletId);
         if (wallet == null) return;
+
+        if (!RGBPaymentMethodHandler.WalletBelongsToStore(wallet.StoreId, expectedStoreId))
+        {
+            _log.LogWarning("ProcessTransfers: wallet {WalletId} (store {WalletStoreId}) does not belong to expected store {ExpectedStoreId}; skipping",
+                walletId, wallet.StoreId, expectedStoreId);
+            return;
+        }
 
         var allInvoices = await ctx.RGBInvoices.Where(i => i.WalletId == walletId).ToListAsync(ct);
         _log.LogInformation("ProcessTransfers: total={Total} invoices for wallet {WalletId}, statuses: {Statuses}",
@@ -272,7 +279,7 @@ public class RGBInvoiceListener : IHostedService
                 {
                     foreach (var t in result.PaymentsToRecord)
                     {
-                        try { await RecordOrUpdatePayment(inv, t, result.PaymentStatus.Value, ct); }
+                        try { await RecordOrUpdatePayment(inv, t, result.PaymentStatus.Value, wallet.StoreId, ct); }
                         catch (Exception ex) { _log.LogWarning(ex, "Failed to record payment for invoice {Id} transfer {Idx}", inv.BtcPayInvoiceId, t.Idx); }
                     }
                 }
@@ -394,12 +401,19 @@ public class RGBInvoiceListener : IHostedService
         if (anyChanged) await ctx.SaveChangesAsync(ct);
     }
 
-    async Task RecordOrUpdatePayment(RGBInvoice rgbInv, RgbTransfer tx, BTCPayServer.Data.PaymentStatus targetStatus, CancellationToken ct)
+    async Task RecordOrUpdatePayment(RGBInvoice rgbInv, RgbTransfer tx, BTCPayServer.Data.PaymentStatus targetStatus, string expectedStoreId, CancellationToken ct)
     {
         var invoiceEntity = await _invoices.GetInvoice(rgbInv.BtcPayInvoiceId);
         if (invoiceEntity == null)
         {
             _log.LogWarning("BTCPay invoice {Id} not found", rgbInv.BtcPayInvoiceId);
+            return;
+        }
+
+        if (!RGBPaymentMethodHandler.WalletBelongsToStore(invoiceEntity.StoreId, expectedStoreId))
+        {
+            _log.LogWarning("BTCPay invoice {Id} (store {InvoiceStoreId}) does not belong to wallet store {ExpectedStoreId}; skipping payment record",
+                rgbInv.BtcPayInvoiceId, invoiceEntity.StoreId, expectedStoreId);
             return;
         }
 
@@ -477,7 +491,7 @@ public class RGBInvoiceListener : IHostedService
             if (inv == null) return;
             var prompt = inv.GetPaymentPrompt(RGBPlugin.RGBPaymentMethodId);
             if (prompt?.Details == null) return;
-            await ProcessTransfers(_handler.ParsePaymentPromptDetails(prompt.Details).WalletId, ct);
+            await ProcessTransfers(_handler.ParsePaymentPromptDetails(prompt.Details).WalletId, inv.StoreId, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
