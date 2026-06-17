@@ -190,7 +190,7 @@ public class RgbLibService : IRgbLibService
         {
             handle.CompleteTimedOutDispose();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException and not AccessViolationException and not AppDomainUnloadedException and not BadImageFormatException)
         {
             log?.LogWarning(ex, "Wallet {WalletId} deferred unload failed; restart required to reclaim it", walletId);
             return;
