@@ -5,6 +5,9 @@ const PINNED: &[(&str, &str)] = &[
     ("rgb-consensus", "0.11.1-rc.10"),
     ("rgb-schemas", "0.11.1-rc.10"),
     ("rgb-invoicing", "0.11.1-rc.10"),
+    ("rgb-strict-types", "1.0.1"),
+    ("bdk_wallet", "3.0.0"),
+    ("bdk_file_store", "0.22.0"),
     ("amplify", "4.8.1"),
 ];
 

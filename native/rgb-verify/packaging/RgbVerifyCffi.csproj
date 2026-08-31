@@ -1,0 +1,87 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Matches the lib/net8.0/_._ placeholder below, which keeps the package consumable by
+         net8.0+ consumers; the plugin's net10.0 is compatible. -->
+    <TargetFramework>net8.0</TargetFramework>
+    <PackageId>RgbVerifyCffi</PackageId>
+    <Authors>Utexo</Authors>
+    <Description>Native trust core for RGB pre-sign intent verification (rgbverifycffi). Does not link rgb-lib.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <IsPackable>true</IsPackable>
+
+    <!-- No managed assembly belongs in a runtime package. -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <!-- Guarantees a dependency-free nuspec: this package is the independent trust core, and a
+         leaked dependency would put something else in its graph. -->
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <!-- Expected for a native-only package (no lib/ assembly of its own). -->
+    <NoWarn>NU5128</NoWarn>
+
+    <!-- The version is supplied by the pack invocation (-p:Version=), so interim and canonical
+         builds cannot silently drift from a value committed here. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../runtimes/**/*" Pack="true" PackagePath="runtimes/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="_._" Pack="true" PackagePath="lib/net8.0/_._" />
+  </ItemGroup>
+
+  <!-- The shipped RID set is declared ONCE here and consumed by the guards below, by
+       scripts/pack-rgbverify.sh and by pack-native.yml, so adding or dropping a RID is a one-line
+       change and cannot drift between them. -->
+  <ItemGroup>
+    <GateRid Include="linux-x64" Lib="librgbverifycffi.so" />
+    <GateRid Include="osx-arm64" Lib="librgbverifycffi.dylib" />
+    <GateRid Include="linux-arm64" Lib="librgbverifycffi.so" />
+  </ItemGroup>
+
+  <Target Name="RequireProdNative" BeforeTargets="GenerateNuspec;Pack">
+    <!-- A package without the production RID would reproduce audit finding A: the artifact
+         publishes cleanly but the pre-sign gate cannot load, so every RGB send fails. -->
+    <Error Condition="!Exists('../runtimes/linux-x64/native/librgbverifycffi.so')"
+           Text="RgbVerifyCffi: runtimes/linux-x64/native/librgbverifycffi.so missing — build it before packing (see scripts/pack-rgbverify.sh)" />
+  </Target>
+
+  <Target Name="RequireAllRids" BeforeTargets="GenerateNuspec;Pack" Condition="'$(RequireAllRids)' == 'true'">
+    <!-- A missing RID becomes a hard startup failure on that platform once the package is what
+         delivers the native, so the canonical pack must carry every declared RID. -->
+    <Error Condition="!Exists('../runtimes/%(GateRid.Identity)/native/%(GateRid.Lib)')"
+           Text="RgbVerifyCffi: declared RID %(GateRid.Identity) has no native at ../runtimes/%(GateRid.Identity)/native/%(GateRid.Lib)" />
+  </Target>
+
+  <!-- Existence is not architecture. An x86-64 ELF staged into runtimes/linux-arm64 satisfied both
+       guards above, so the package could claim a RID it cannot load on. This reads the ELF e_machine,
+       the Mach-O cputype or the PE COFF machine of every native the None glob at the top of this file
+       will pack. Deliberately unconditional, because that glob is not gated on RequireAllRids either,
+       so gating this on RequireAllRids would leave a plain `dotnet pack` unchecked. Declared last so
+       RequireProdNative and RequireAllRids still report a missing file with their own precise message.
+       It never demands that a RID be present, only that whatever is present is what it says it is.
+
+       All three guards hook GenerateNuspec, not Pack alone. Measured: BeforeTargets="Pack" runs AFTER
+       the dependency that writes the file, so a rejecting guard still left a complete .nupkg on disk:
+       a 7.2 MB package carrying an x86-64 ELF at runtimes/linux-arm64 survived a pack that exited 1,
+       and a consumer restoring from the output folder would have found it. Pack is kept as a second
+       hook so that if GenerateNuspec is ever renamed, BeforeTargets does not silently match nothing and
+       drop the guard; MSBuild runs a target at most once per build, so this costs nothing. -->
+  <!-- The interpreter is resolved rather than assumed: `python3` is absent on plenty of machines and
+       is normally spelled `python` or `py` on Windows, and hardcoding it turned a working `dotnet pack`
+       into a hard failure there. Deliberately NOT a skip condition — a guard with an opt-out is not a
+       guard, so if neither interpreter exists the pack still fails. -->
+  <Target Name="ResolveGateArchitectureInterpreter">
+    <Exec Command="python3 -c &quot;pass&quot;" ContinueOnError="true"
+          StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="GateInterpreterProbeExitCode" />
+    </Exec>
+    <PropertyGroup>
+      <GateArchitectureInterpreter Condition="'$(GateInterpreterProbeExitCode)' == '0'">python3</GateArchitectureInterpreter>
+      <GateArchitectureInterpreter Condition="'$(GateArchitectureInterpreter)' == ''">python</GateArchitectureInterpreter>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="AssertNativeArchitecture" BeforeTargets="GenerateNuspec;Pack"
+          DependsOnTargets="ResolveGateArchitectureInterpreter">
+    <Exec Command="&quot;$(GateArchitectureInterpreter)&quot; &quot;$(MSBuildProjectDirectory)/../../../scripts/native_architecture.py&quot; --staging-tree &quot;$(MSBuildProjectDirectory)/../runtimes&quot;" />
+  </Target>
+
+</Project>

@@ -23,6 +23,7 @@ public class RGBInvoice
     public long? Amount { get; set; }
     public long? ReceivedAmount { get; set; }
     public long? ExpirationTimestamp { get; set; }
+    public long? MonitoringExpirationTimestamp { get; set; }
     public int? BatchTransferIdx { get; set; }
     public RGBInvoiceStatus Status { get; set; } = RGBInvoiceStatus.Pending;
     public bool IsBlind { get; set; }

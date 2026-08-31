@@ -1,0 +1,53 @@
+Real regtest artifacts for the pre-sign input-accounting gate (rgbverify_validate_v2).
+
+HOW THEY WERE PRODUCED
+Local throwaway regtest only, using rgb-lib's own docker harness at the pinned tag
+v0.3.0-beta.30 (commit 12da9a646d3a85c90e374fddb897c010600b5d58):
+
+    cd <rgb-lib checkout>/tests && ./regtest.sh prepare_bindings_examples_environment
+
+(there is no "start" subcommand; the script's own port pre-check uses `ss`, which does not exist on
+macOS and silently reports every port free, so check 18443 18444 50001 3000 8140 8141 with lsof
+first). Then, per the upstream cfa_extra_success recipe:
+
+  1. create_utxos -> one colorable UTXO
+  2. issue_asset_nia  -> contract A on it
+  3. issue_asset_cfa  -> contract B on the SAME UTXO (max_allocations_per_utxo = 10)
+  4. a second create_utxos round for spare colorable change capacity
+  5. blind_receive on a second wallet
+  6. send_begin for A only
+
+send_end was NEVER called. Nothing was broadcast beyond the local regtest chain. No mainnet, no
+testnet, no real funds. The chain those wallets were built on has since been destroyed.
+
+THE ARTIFACTS ARE CHAIN-INDEPENDENT, BUT NOT INDEXER-INDEPENDENT
+Measured: validate_v2 accepts stock-producer-witness-vout-successor against a FRESH regtest chain
+whose tip and txids differ entirely from the one that produced it -- every transaction it needs comes
+from the consignment and the fascia, not from the indexer. What it does need is a reachable Electrum
+indexer, because it constructs a resolver before it validates anything; with the stack down the same
+artifacts fail with "failed to build electrum resolver: Connection refused".
+
+KEYS
+Every mnemonic, xpub and fingerprint here belongs to a wallet generated for this capture on a
+throwaway regtest chain. None has ever held value on any live network. They are recorded because
+MemoryWalletSigner derives from a mnemonic and the intent verifier proves change and carry-forward
+successors against the wallet's own colored account.
+
+hostile-patched-producer-two-output-carry-forward -- READ THIS
+That fixture was NOT produced by stock rgb-lib. rgb-lib's carry-forward builder loop
+(src/wallet/online.rs:2371-2400) emits exactly one add_input and one add_owned_state_raw per
+(outpoint, opout, state), so no honest producer can emit a carry-forward transition with two
+outputs. The fixture exists because the producer was patched -- see
+hostile-patched-producer-two-output-carry-forward/rgb-lib-hostile-producer.patch, which splits the
+blank transition's change across two distinct seals on the same witness vout with the sum preserved.
+That models a HOSTILE FASCIA PRODUCER, which is exactly the threat the one-output normal form exists
+to stop. Two facts about the patch, both measured, both non-obvious: the builder's assignment
+container is a map keyed by seal with last-write-wins, so two writes on the SAME seal collapse to one
+output; and get_change_seal returns a fresh random blinding per call on the witness-vout branch,
+which is what makes two distinct seals on one vout possible.
+
+Because the patched producer computes the bundle, the MPC tree, the opret and the consignment itself,
+the fixture is fully self-consistent: it passes the complete-fascia commitment check and passes rgb
+consensus, and is rejected only by the post-consensus exhaustive input scan. That is what makes it
+the only reaching row for the carry-forward normal form. It must never be presented as a stock
+rgb-lib artifact.

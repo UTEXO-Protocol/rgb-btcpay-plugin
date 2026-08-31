@@ -32,6 +32,11 @@ on:
         required: false
         default: false
         type: boolean
+      allow_artifact_replace:
+        description: "Confirm replacing an existing release's artifact with different bytes (a rerun that changes the .btcpay output). Leave false to have a rerun fail loudly on a mismatch instead."
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: release-${{ inputs.version }}
@@ -53,7 +58,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
           fetch-depth: 0
@@ -85,27 +90,28 @@ jobs:
           fi
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
             10.0.x
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build rgbverifycffi native (linux-x64 = prod RID)
+      # Records the commit being judged before anything can be tagged, so a HEAD that moves during the
+      # run is caught at the tag step rather than silently tagging something else. The gate native
+      # itself is no longer a blob in this commit: it arrives from the published RgbVerifyCffi package
+      # through the locked restore below, and the artifact checks after it run under
+      # --provenance strict, which binds the shipped entry to the package-cache copy.
+      - name: Record the release commit
         run: |
           set -euo pipefail
-          sudo apt-get update -qq && sudo apt-get install -y -qq cmake clang
-          rustc --version && cargo --version
-          bash native/rgb-verify/build-native.sh
-          NATIVE=native/rgb-verify/runtimes/linux-x64/native/librgbverifycffi.so
-          test -f "$NATIVE" || { echo "::error::rgbverifycffi native not produced at $NATIVE"; exit 1; }
-          for sym in rgbverify_decode_invoice rgbverify_validate rgbverify_commitment_check rgbverify_string_free; do
-            nm -D --defined-only "$NATIVE" | grep -q "$sym" \
-              || { echo "::error::rgbverifycffi native missing expected export $sym"; exit 1; }
-          done
-          echo "built $NATIVE ($(stat -c %s "$NATIVE") bytes)"
+          echo "RELEASE_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      # ci.yml triggers only on pull_request, push to main and manual dispatch, none of which a tag
+      # publication implies, while this workflow is dispatchable on any ref, so without this step a
+      # release could tag a commit whose crate sources were never checked against the recorded
+      # manifest. It says nothing about the package's binary -- that is what strict provenance below
+      # is for -- only that the recorded inputs still match the tree.
+      - name: Require the tagged commit's gate-native source manifest to match its recorded sources
+        run: bash scripts/verify-tracked-gate-native-freshness.sh
 
       - name: Restore (locked mode — packages.lock.json must match)
         run: |
@@ -113,6 +119,12 @@ jobs:
           dotnet restore "$PROJECT_FILE" \
             --locked-mode \
             -p:ContinuousIntegrationBuild=true
+
+      # Strict provenance below binds the shipped entry to the package-cache copy, but says nothing about
+      # which bytes that copy holds. This is the step that does: the tagged commit must record the sha256
+      # of every native the pinned package delivers, so a tag cannot ship native bytes nobody reviewed.
+      - name: Require the tagged commit to record the hashes of the natives it will ship
+        run: bash scripts/verify-gate-native-package-hashes.sh
 
       - name: Publish (Release)
         run: |
@@ -124,21 +136,11 @@ jobs:
             -p:Deterministic=true \
             -o publish-out
 
-      - name: Sanity-check published files
+      - name: Verify complete publish artifact under strict provenance
         run: |
-          set -euo pipefail
-          test -f "publish-out/$MANIFEST_FILE" || { echo "::error::manifest missing in publish output"; exit 1; }
-          test -f "publish-out/BTCPayServer.Plugins.RgbUtexo.dll" || { echo "::error::plugin dll missing"; exit 1; }
-          if [[ -f "publish-out/BTCPayServer.dll" ]]; then
-            echo "::error::publish output contains BTCPayServer.dll — host assemblies must not ship in the plugin"
-            exit 1
-          fi
-          VERIFY=publish-out/runtimes/linux-x64/native/librgbverifycffi.so
-          RGBLIB=publish-out/runtimes/linux-x64/native/librgblibcffi.so
-          test -f "$VERIFY" || { echo "::error::rgbverifycffi native missing from publish output — the C8 gate would fail closed on every RGB send"; exit 1; }
-          test -f "$RGBLIB" || { echo "::error::rgblibcffi (C8-enabled) native missing from publish output"; exit 1; }
-          nm -D --defined-only "$RGBLIB" | grep -q rgblib_create_consignments || { echo "::error::packaged rgblibcffi lacks the C8 exports (wrong RgbLib version?)"; exit 1; }
-          echo "native trust libs present: $(stat -c %s "$VERIFY") + $(stat -c %s "$RGBLIB") bytes"
+          python3 scripts/verify_plugin_artifact.py publish-out \
+            --provenance strict \
+            --package-cache "$HOME/.nuget/packages"
 
       - name: Pack .btcpay
         run: |
@@ -146,6 +148,18 @@ jobs:
           (cd publish-out && zip -r "../$ARTIFACT_NAME" .)
           sha256sum "$ARTIFACT_NAME" | tee "$ARTIFACT_NAME.sha256"
           ls -lh "$ARTIFACT_NAME" "$ARTIFACT_NAME.sha256"
+
+      - name: Verify final .btcpay archive under strict provenance
+        run: |
+          python3 scripts/verify_plugin_artifact.py "$ARTIFACT_NAME" \
+            --provenance strict \
+            --package-cache "$HOME/.nuget/packages"
+
+      # Loads the gate native extracted from the archive that actually ships, inside Debian 12, and
+      # resolves all five exports. Content checks cannot see staleness, but they do see a wrong
+      # architecture, a truncated file, and a glibc floor above the deployment target.
+      - name: Assert the packed gate native loads on Debian 12
+        run: bash scripts/verify-artifact-native-loads.sh "$ARTIFACT_NAME"
 
       - name: Configure git identity
         run: |
@@ -155,7 +169,15 @@ jobs:
       - name: Create or verify tag ${{ env.TAG }}
         run: |
           set -euo pipefail
+          if [[ -z "${RELEASE_COMMIT:-}" ]]; then
+            echo "::error::RELEASE_COMMIT is unset, so the step that records the commit under verification either never ran or never recorded it. An absent value must not read as agreement. Refusing to tag."
+            exit 1
+          fi
           SHA=$(git rev-parse HEAD)
+          if [[ "$SHA" != "$RELEASE_COMMIT" ]]; then
+            echo "::error::HEAD is now $SHA but the artifact was verified on $RELEASE_COMMIT. The commit that passed is not the commit this tag would carry."
+            exit 1
+          fi
           if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
             EXISTING=$(git rev-list -n 1 "refs/tags/$TAG")
             if [[ "$EXISTING" != "$SHA" ]]; then
@@ -169,13 +191,36 @@ jobs:
             git push origin "$TAG"
           fi
 
+      # A rerun of this workflow on the same commit can still reach here (the build is not
+      # guaranteed bit-reproducible), and the step below used to delete-and-replace the Release
+      # unconditionally. That let a rerun silently swap the downloadable .btcpay bytes under a tag
+      # someone already verified and pinned. This proves sameness against the already-published
+      # sha256 instead of assuming it, and requires an explicit opt-in to replace on a mismatch.
       - name: Create / replace GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRERELEASE: ${{ inputs.prerelease }}
+          ALLOW_ARTIFACT_REPLACE: ${{ inputs.allow_artifact_replace }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
+            if gh release download "$TAG" -p "$ARTIFACT_NAME.sha256" -O previous-release.sha256; then
+              PUBLISHED_HASH=$(cut -d' ' -f1 previous-release.sha256)
+              NEW_HASH=$(cut -d' ' -f1 "$ARTIFACT_NAME.sha256")
+              if [[ "$PUBLISHED_HASH" != "$NEW_HASH" ]]; then
+                if [[ "$ALLOW_ARTIFACT_REPLACE" != "true" ]]; then
+                  echo "::error::Release $TAG already exists with artifact sha256 $PUBLISHED_HASH, but this run built $NEW_HASH. Refusing to replace it silently. Re-run with 'allow_artifact_replace' checked to confirm an intentional replacement."
+                  exit 1
+                fi
+                echo "::warning::Release $TAG artifact is changing: $PUBLISHED_HASH -> $NEW_HASH (allow_artifact_replace=true)."
+              fi
+            else
+              if [[ "$ALLOW_ARTIFACT_REPLACE" != "true" ]]; then
+                echo "::error::Release $TAG already exists but its $ARTIFACT_NAME.sha256 could not be downloaded, so this run cannot prove the artifact is unchanged. Refusing to replace it. Re-run with 'allow_artifact_replace' checked to confirm an intentional replacement."
+                exit 1
+              fi
+              echo "::warning::Release $TAG already exists with no downloadable $ARTIFACT_NAME.sha256 to compare against; replacing it because allow_artifact_replace=true."
+            fi
             echo "Release $TAG already exists — replacing it so the artifact stays in sync."
             gh release delete "$TAG" --yes --cleanup-tag=false
           fi

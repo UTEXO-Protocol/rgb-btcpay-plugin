@@ -11,8 +11,7 @@ public static class RgbIntentVerifier
 
     public static async Task VerifyAsync(
         RgbDecodeInvoiceResult decode,
-        RgbValidateResult validate,
-        RgbCommitmentCheckResult commitment,
+        RgbValidateV2Result validate,
         PSBT unsignedPsbt,
         string unsignedTxid,
         MemoryWalletSigner signer,
@@ -32,7 +31,8 @@ public static class RgbIntentVerifier
         VerifyNoDecoyTaproot(unsignedPsbt, signer, walletNetwork);
         var recipientLeg = VerifyRecipientLeg(decode, validate, operatorAmount);
         await VerifyChangeLegsAsync(validate, recipientLeg, unsignedPsbt, signer, walletNetwork, chainClient, ct);
-        VerifyCommitment(decode, commitment);
+        VerifyCommitmentAndCoverage(decode, validate);
+        await VerifyCarryForwardsAsync(validate, unsignedPsbt, signer, walletNetwork, chainClient, ct);
         VerifyTransportEndpoints(decode, stagedTransportEndpoints);
     }
 
@@ -186,10 +186,9 @@ public static class RgbIntentVerifier
                         throw new RgbIntentVerificationException(
                             $"change leg witness vout {vout} is out of range of the tx being signed");
                     var script = tx.Outputs[(int)vout].ScriptPubKey;
-                    if (!signer.IsOwnOutput(unsignedPsbt.Outputs[(int)vout], script, network)
-                        && !signer.IsOwnScript(script, network))
+                    if (!signer.IsRgbColoredOutput(unsignedPsbt.Outputs[(int)vout], script, network))
                         throw new RgbIntentVerificationException(
-                            $"change leg witness vout {vout} is not a wallet-owned output");
+                            $"change leg witness vout {vout} is not proven on rgb-lib's colored account");
                     break;
 
                 case RevealedConcreteOutpoint:
@@ -235,9 +234,10 @@ public static class RgbIntentVerifier
             throw new RgbIntentVerificationException($"change leg outpoint {leg.Outpoint} vout is out of range");
         var script = funding.Outputs[(int)vout].ScriptPubKey;
 
-        if (!signer.IsOwnScript(script, network))
+        if (string.IsNullOrWhiteSpace(leg.DerivationPath)
+            || !signer.IsRgbColoredScriptAtPath(script, leg.DerivationPath, network))
             throw new RgbIntentVerificationException(
-                $"change leg outpoint {leg.Outpoint} is not a wallet-owned script");
+                $"change leg outpoint {leg.Outpoint} is not proven on rgb-lib's colored account");
 
         var unspent = await chainClient.ListUnspentByScriptAsync(script, ct);
         var isUnspent = unspent.Any(o =>
@@ -247,18 +247,146 @@ public static class RgbIntentVerifier
                 $"change leg outpoint {leg.Outpoint} is not in the wallet's unspent set");
     }
 
-    static void VerifyCommitment(RgbDecodeInvoiceResult decode, RgbCommitmentCheckResult commitment)
+    static void VerifyCommitmentAndCoverage(RgbDecodeInvoiceResult decode, RgbValidateV2Result validate)
     {
-        if (!commitment.Matches)
+        if (validate.ValidationVersion != 2)
+            throw new RgbIntentVerificationException(
+                $"unsupported native validation version {validate.ValidationVersion}");
+        if (!validate.InputsAccounted)
+            throw new RgbIntentVerificationException(
+                "intent gate: not every PSBT input allocation is exhaustively accounted for");
+        if (!validate.CommitmentMatches)
             throw new RgbIntentVerificationException(
                 "commitment mismatch: the opret in the tx being signed does not commit the fascia bundles");
-        if (!commitment.WitnessIdMatches)
+        if (!validate.WitnessIdMatches)
             throw new RgbIntentVerificationException(
                 "commitment witness mismatch: the fascia is not bound to the tx being signed");
-        if (commitment.CommittedContractIds.Count != 1
-            || !string.Equals(commitment.CommittedContractIds[0], decode.ContractId, StringComparison.Ordinal))
+
+        EnsureUniqueNonEmpty(validate.CommittedContractIds, "committed contract");
+        EnsureUniqueNonEmpty(validate.VerifiedContractIds, "verified contract");
+        EnsureUniqueNonEmpty(validate.VerifiedTransitionIds, "verified transition");
+        if (string.IsNullOrWhiteSpace(validate.MainTransitionId))
+            throw new RgbIntentVerificationException("native result omits the main transition id");
+
+        var expectedContracts = new HashSet<string>(StringComparer.Ordinal) { decode.ContractId };
+        var expectedTransitions = new HashSet<string>(StringComparer.Ordinal) { validate.MainTransitionId };
+        var opouts = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var carry in validate.CarryForwards)
+        {
+            if (string.IsNullOrWhiteSpace(carry.ContractId)
+                || string.IsNullOrWhiteSpace(carry.Opout)
+                || string.IsNullOrWhiteSpace(carry.TransitionId)
+                || string.IsNullOrWhiteSpace(carry.InputOutpoint))
+                throw new RgbIntentVerificationException("native carry-forward proof is incomplete");
+            if (!opouts.Add($"{carry.ContractId}\0{carry.Opout}"))
+                throw new RgbIntentVerificationException("native result duplicates a carry-forward opout");
+            if (!expectedTransitions.Add(carry.TransitionId))
+                throw new RgbIntentVerificationException("native result reuses a carry-forward transition");
+            if (!validate.Prevouts.Contains(carry.InputOutpoint, StringComparer.OrdinalIgnoreCase))
+                throw new RgbIntentVerificationException(
+                    $"carry-forward input {carry.InputOutpoint} is not a witness prevout");
+            if (!string.Equals(carry.StateKind, "amount", StringComparison.Ordinal)
+                || !carry.Amount.HasValue)
+                throw new RgbIntentVerificationException("unsupported carry-forward state proof");
+            expectedContracts.Add(carry.ContractId);
+        }
+
+        var committed = new HashSet<string>(validate.CommittedContractIds, StringComparer.Ordinal);
+        var verified = new HashSet<string>(validate.VerifiedContractIds, StringComparer.Ordinal);
+        var transitions = new HashSet<string>(validate.VerifiedTransitionIds, StringComparer.Ordinal);
+        if (!committed.SetEquals(expectedContracts) || !verified.SetEquals(expectedContracts))
             throw new RgbIntentVerificationException(
-                "commitment scope mismatch: the tx commits a contract set other than the intended asset");
+                "commitment scope mismatch: committed, verified, and intended carry contract sets differ");
+        if (!transitions.SetEquals(expectedTransitions))
+            throw new RgbIntentVerificationException(
+                "transition scope mismatch: native result contains missing or unrelated transitions");
+    }
+
+    static void EnsureUniqueNonEmpty(IEnumerable<string> values, string kind)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var value in values)
+            if (string.IsNullOrWhiteSpace(value) || !seen.Add(value))
+                throw new RgbIntentVerificationException($"native result has an empty or duplicate {kind} id");
+    }
+
+    static async Task VerifyCarryForwardsAsync(
+        RgbValidateV2Result validate,
+        PSBT unsignedPsbt,
+        MemoryWalletSigner signer,
+        Network network,
+        IBitcoinChainClient chainClient,
+        CancellationToken ct)
+    {
+        var tx = unsignedPsbt.GetGlobalTransaction();
+        foreach (var carry in validate.CarryForwards)
+        {
+            switch (carry.SuccessorKind)
+            {
+                case RevealedWitnessVout:
+                    if (!carry.WitnessVout.HasValue || carry.SuccessorOutpoint != null
+                        || carry.DerivationPath != null)
+                        throw new RgbIntentVerificationException(
+                            "witness carry-forward successor proof has inconsistent fields");
+                    var vout = carry.WitnessVout.Value;
+                    if (vout >= tx.Outputs.Count)
+                        throw new RgbIntentVerificationException(
+                            $"carry-forward witness vout {vout} is out of range");
+                    var script = tx.Outputs[(int)vout].ScriptPubKey;
+                    if (!signer.IsRgbColoredOutput(unsignedPsbt.Outputs[(int)vout], script, network))
+                        throw new RgbIntentVerificationException(
+                            $"carry-forward witness vout {vout} is not proven on rgb-lib's colored account");
+                    break;
+
+                case RevealedConcreteOutpoint:
+                    if (carry.WitnessVout.HasValue || string.IsNullOrWhiteSpace(carry.SuccessorOutpoint)
+                        || string.IsNullOrWhiteSpace(carry.DerivationPath))
+                        throw new RgbIntentVerificationException(
+                            "concrete carry-forward successor proof has inconsistent fields");
+                    await VerifyConcreteCarryAsync(carry, unsignedPsbt, signer, network, chainClient, ct);
+                    break;
+
+                default:
+                    throw new RgbIntentVerificationException(
+                        $"carry-forward has unsupported successor kind '{carry.SuccessorKind}'");
+            }
+        }
+    }
+
+    static async Task VerifyConcreteCarryAsync(
+        RgbCarryForwardProof carry,
+        PSBT unsignedPsbt,
+        MemoryWalletSigner signer,
+        Network network,
+        IBitcoinChainClient chainClient,
+        CancellationToken ct)
+    {
+        var outpoint = carry.SuccessorOutpoint!;
+        var parts = outpoint.Split(':');
+        if (parts.Length != 2 || !uint.TryParse(parts[1], out var vout))
+            throw new RgbIntentVerificationException($"carry successor outpoint '{outpoint}' is malformed");
+        var txid = parts[0];
+        foreach (var input in unsignedPsbt.GetGlobalTransaction().Inputs)
+            if (string.Equals(input.PrevOut.Hash.ToString(), txid, StringComparison.OrdinalIgnoreCase)
+                && input.PrevOut.N == vout)
+                throw new RgbIntentVerificationException(
+                    $"carry successor {outpoint} is consumed by the transaction being signed");
+
+        var rawTx = await chainClient.GetRawTransactionAsync(txid, ct);
+        var funding = Transaction.Parse(rawTx, network);
+        if (!string.Equals(funding.GetHash().ToString(), txid, StringComparison.OrdinalIgnoreCase)
+            || vout >= funding.Outputs.Count)
+            throw new RgbIntentVerificationException(
+                $"carry successor funding transaction does not bind to {outpoint}");
+        var script = funding.Outputs[(int)vout].ScriptPubKey;
+        if (!signer.IsRgbColoredScriptAtPath(script, carry.DerivationPath!, network))
+            throw new RgbIntentVerificationException(
+                $"carry successor {outpoint} is not proven on rgb-lib's colored account");
+        var unspent = await chainClient.ListUnspentByScriptAsync(script, ct);
+        if (!unspent.Any(o => string.Equals(o.Txid, txid, StringComparison.OrdinalIgnoreCase)
+                              && o.Vout == vout))
+            throw new RgbIntentVerificationException(
+                $"carry successor {outpoint} is not in the wallet's unspent set");
     }
 
     static void VerifyTransportEndpoints(RgbDecodeInvoiceResult decode, IReadOnlyList<string> staged)

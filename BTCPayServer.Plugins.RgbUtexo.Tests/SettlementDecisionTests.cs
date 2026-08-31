@@ -55,10 +55,10 @@ public class SettlementDecisionTests
     }
 
     [Fact]
-    public void Status1_PositiveAmount_TransitionWaiting()
+    public void Status1_PositiveAmount_DoesNotTreatWaitingCounterpartyAsPayment()
     {
         var result = RGBInvoiceListener.EvaluateTransfer(1, 50, 100);
-        Assert.Equal(SettlementDecision.TransitionWaiting, result);
+        Assert.Equal(SettlementDecision.TransitionWaitingNoPayment, result);
     }
 
     [Fact]

@@ -3,6 +3,18 @@
 version = 4
 
 [[package]]
+name = "ahash"
+version = "0.8.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
+dependencies = [
+ "cfg-if",
+ "once_cell",
+ "version_check",
+ "zerocopy",
+]
+
+[[package]]
 name = "amplify"
 version = "4.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -179,7 +191,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6cb4a8b2f1afee4ef00a190b260ad871842b93206177b59631fecd325d48d538"
 dependencies = [
  "amplify",
- "base64",
+ "base64 0.22.1",
  "mnemonic",
  "sha2",
 ]
@@ -192,6 +204,12 @@ checksum = "365c0acd5b2e8dd0111a46c4faea83fb3cfb6e39a49a7c73a06e090db7b2eff0"
 dependencies = [
  "bitcoin_hashes",
 ]
+
+[[package]]
+name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
 
 [[package]]
 name = "base64"
@@ -209,10 +227,68 @@ dependencies = [
 ]
 
 [[package]]
+name = "bdk_chain"
+version = "0.23.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c290eff038799a8ac0c5a82b6160a9ca456baa299a6f22b262c771342d2846c0"
+dependencies = [
+ "bdk_core",
+ "bitcoin",
+ "miniscript",
+ "serde",
+]
+
+[[package]]
+name = "bdk_core"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb3028782f6bf14a6df987244333d34e6b272b5a40a53e4879ec2dfd82275a3a"
+dependencies = [
+ "bitcoin",
+ "hashbrown 0.14.5",
+ "serde",
+]
+
+[[package]]
+name = "bdk_file_store"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7b9a98edb58d02b601239832674a9ca9f1465e08e1dd1fac3a0e34004372406"
+dependencies = [
+ "bdk_core",
+ "bincode",
+ "serde",
+]
+
+[[package]]
+name = "bdk_wallet"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67f3c4f9526d22374fca5b7ff1d6bf8d921ab56db2dac8df66a2c5561b31d4ef"
+dependencies = [
+ "bdk_chain",
+ "bdk_file_store",
+ "bitcoin",
+ "miniscript",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bech32"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32637268377fc7b10a8c6d51de3e7fba1ce5dd371a96e342b34e6078db558e7f"
+
+[[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "bitcoin"
@@ -221,6 +297,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed8ccb78a9ff7a6fbb90e2fb9b8588b4a9928d49d8af3cb789108a84ea6b0ce"
 dependencies = [
  "base58ck",
+ "base64 0.21.7",
  "bech32",
  "bitcoin-io",
  "bitcoin-units",
@@ -521,7 +598,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -665,6 +742,16 @@ dependencies = [
  "cfg-if",
  "crunchy",
  "zerocopy",
+]
+
+[[package]]
+name = "hashbrown"
+version = "0.14.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
+dependencies = [
+ "ahash",
+ "serde",
 ]
 
 [[package]]
@@ -818,12 +905,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
+name = "miniscript"
+version = "12.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c14116d8342edd3626b0f8e84df16f4e6a76dc04799ba747493403236a1b8ac5"
+dependencies = [
+ "bech32",
+ "bitcoin",
+ "serde",
+]
+
+[[package]]
 name = "minreq"
 version = "2.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05015102dad0f7d61691ca347e9d9d9006685a64aefb3d79eecf62665de2153d"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "rustls 0.21.12",
  "rustls-webpki 0.101.7",
  "serde",
@@ -1191,14 +1289,17 @@ name = "rgb-verify"
 version = "0.1.0"
 dependencies = [
  "amplify",
+ "bdk_wallet",
  "cbindgen",
  "hex",
  "rgb-consensus",
  "rgb-invoicing",
  "rgb-ops",
  "rgb-schemas",
+ "rgb-strict-types",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -1234,7 +1335,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1499,7 +1600,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -70,7 +70,8 @@ public class EsploraHttpClient : IBitcoinChainClient
         return txid;
     }
 
-    public async Task<IReadOnlyList<Outpoint>> ListUnspentByScriptAsync(Script script, CancellationToken ct = default)
+    public async Task<IReadOnlyList<UnspentWithConfirmation>> ListUnspentWithConfirmationByScriptAsync(
+        Script script, CancellationToken ct = default)
     {
         var scriptHash = EsploraScriptHash(script);
         using var resp = await _http.GetAsync($"{_baseUrl}/scripthash/{scriptHash}/utxo",
@@ -84,12 +85,27 @@ public class EsploraHttpClient : IBitcoinChainClient
 
         var body = await ReadCappedAsync(resp, ct);
         using var doc = JsonDocument.Parse(body);
-        var outpoints = new List<Outpoint>();
-        foreach (var item in doc.RootElement.EnumerateArray())
-            outpoints.Add(new Outpoint(
-                item.GetProperty("txid").GetString()!,
-                item.GetProperty("vout").GetInt32()));
-        return outpoints;
+        return ReadUnspentRows(doc.RootElement);
+    }
+
+    internal static IReadOnlyList<UnspentWithConfirmation> ReadUnspentRows(JsonElement root)
+    {
+        var rows = new List<UnspentWithConfirmation>();
+        foreach (var item in root.EnumerateArray())
+        {
+            var confirmed = item.ValueKind == JsonValueKind.Object
+                && item.TryGetProperty("status", out var status)
+                && status.ValueKind == JsonValueKind.Object
+                && status.TryGetProperty("confirmed", out var flag)
+                && flag.ValueKind == JsonValueKind.True;
+
+            rows.Add(new UnspentWithConfirmation(
+                new Outpoint(
+                    item.GetProperty("txid").GetString()!,
+                    item.GetProperty("vout").GetInt32()),
+                confirmed));
+        }
+        return rows;
     }
 
     internal static string EsploraScriptHash(Script script) =>

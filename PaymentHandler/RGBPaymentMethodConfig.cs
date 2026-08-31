@@ -10,9 +10,7 @@ public class RGBPaymentMethodConfig
     [JsonPropertyName("useWitnessReceive")] [JsonProperty("useWitnessReceive")] public bool UseWitnessReceive { get; set; } = true;
     [JsonPropertyName("utxoCount")] [JsonProperty("utxoCount")] public int UtxoCount { get; set; } = 4;
     [JsonPropertyName("utxoSize")] [JsonProperty("utxoSize")] public int UtxoSize { get; set; } = 1000;
-    [JsonPropertyName("maxAllocationsPerUtxo")] [JsonProperty("maxAllocationsPerUtxo")] public int MaxAllocationsPerUtxo { get; set; } = 10;
     [JsonPropertyName("minConfirmations")] [JsonProperty("minConfirmations")] public int MinConfirmations { get; set; } = 1;
-    [JsonPropertyName("allowOneToOneRateFallback")] [JsonProperty("allowOneToOneRateFallback")] public bool AllowOneToOneRateFallback { get; set; } = false;
 }
 
 

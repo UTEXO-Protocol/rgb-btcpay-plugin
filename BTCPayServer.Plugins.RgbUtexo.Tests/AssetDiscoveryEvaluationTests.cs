@@ -43,7 +43,7 @@ public class AssetDiscoveryEvaluationTests
     }
 
     [Fact]
-    public void Returns_WaitingConfirmations_for_status_1_or_2_transfer()
+    public void Returns_WaitingConfirmations_for_status_2_transfer()
     {
         var inv = BlindInvoice();
         var result = RGBInvoiceListener.EvaluateAssetDiscoveryMatch(inv, CandidateAsset, [T(1, 2, 50)]);
@@ -76,15 +76,11 @@ public class AssetDiscoveryEvaluationTests
     }
 
     [Fact]
-    public void Flags_IsZeroAmount_for_status_1_zero_amount()
+    public void Status1WaitingCounterpartyDoesNotMatchTheInvoiceItCreated()
     {
-        // Spec §6 edge case 2 — zero-amount at ANY status must not advance the invoice
-        // and must not register the asset.
         var inv = BlindInvoice();
         var result = RGBInvoiceListener.EvaluateAssetDiscoveryMatch(inv, CandidateAsset, [T(1, 1, 0)]);
-        Assert.NotNull(result);
-        Assert.True(result!.IsZeroAmount);
-        Assert.Equal(RGBInvoiceStatus.Pending, result.NewStatus);
+        Assert.Null(result);
     }
 
     [Fact]

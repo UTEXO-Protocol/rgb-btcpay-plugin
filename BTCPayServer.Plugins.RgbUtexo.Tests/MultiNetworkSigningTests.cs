@@ -98,15 +98,13 @@ public class MultiNetworkSigningTests
         using var testnet = new MemoryWalletSigner(TestMnemonic, Network.TestNet);
         using var mainnet = new MemoryWalletSigner(TestMnemonic, Network.Main);
 
-        Assert.NotEqual(regtest.XpubVanilla, mainnet.XpubVanilla);
-        Assert.NotEqual(regtest.XpubColored, mainnet.XpubColored);
+        Assert.NotEqual(regtest.XpubRgbLibVanilla, mainnet.XpubRgbLibVanilla);
 
-        Assert.Equal(regtest.XpubVanilla, testnet.XpubVanilla);
-        Assert.Equal(regtest.XpubColored, testnet.XpubColored);
+        Assert.Equal(regtest.XpubRgbLibVanilla, testnet.XpubRgbLibVanilla);
 
-        Assert.StartsWith("tpub", regtest.XpubVanilla);
-        Assert.StartsWith("tpub", testnet.XpubVanilla);
-        Assert.StartsWith("xpub", mainnet.XpubVanilla);
+        Assert.StartsWith("tpub", regtest.XpubRgbLibVanilla);
+        Assert.StartsWith("tpub", testnet.XpubRgbLibVanilla);
+        Assert.StartsWith("xpub", mainnet.XpubRgbLibVanilla);
     }
 
     [Fact]
@@ -131,7 +129,7 @@ public class MultiNetworkSigningTests
 
             var isTestnet = network != Network.Main;
             var expectedPrefix = isTestnet ? "tpub" : "xpub";
-            Assert.StartsWith(expectedPrefix, signer!.XpubVanilla);
+            Assert.StartsWith(expectedPrefix, signer!.XpubRgbLibVanilla);
 
             var masterKey = new Mnemonic(TestMnemonic).DeriveExtKey();
             var vanillaPath = isTestnet ? "m/84'/1'/0'/0/0" : "m/84'/0'/0'/0/0";

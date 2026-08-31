@@ -111,12 +111,8 @@ public class RgbBackupValidatorNegativeTests
         Assert.Contains("path traversal", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    // Symlink mode: current RgbBackupValidator does not inspect ZipArchiveEntry.ExternalAttributes
-    // (only entry.FullName + entry.Length). A symlink-marked entry with a benign FullName/Length
-    // is therefore ACCEPTED. This test locks in the current behavior. If a future change adds
-    // symlink-aware rejection, this test will fail and signal the policy change requires review.
     [Fact]
-    public async Task Symlink_BenignEntry_CurrentBehavior_Accepts()
+    public async Task Symlink_BenignEntry_AcceptedBecauseExternalAttributesAreNotInspected_ChangingThatIsAPolicyChange()
     {
         var content = ZipWithEntries(zip =>
         {
@@ -205,12 +201,8 @@ public class RgbBackupValidatorNegativeTests
     }
 
     [Fact]
-    public async Task CancellationDuringInitialCopy_Throws()
+    public async Task CancellationDuringTheOnlyTokenObservingStep_TheFormFileCopy_Throws()
     {
-        // Cancel during the initial IFormFile -> MemoryStream copy
-        // (RgbBackupValidator.cs:16: await input.CopyToAsync(memStream, ct)).
-        // ValidateBytes is fully synchronous and doesn't observe the token;
-        // this test only exercises the one place where ct IS observed.
         var content = ZipWithEntries(zip => zip.CreateEntry("anything.dat"));
         var file = new SlowFormFile(content);
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));

@@ -66,12 +66,20 @@ else
                                 {
                                     <option value="@asset.AssetId"
                                             data-balance="@asset.SpendableBalance"
-                                            data-ticker="@asset.Ticker">
-                                        @asset.Ticker — @asset.SpendableBalance.ToString("N0") spendable
+                                            data-ticker="@asset.Ticker"
+                                            data-name="@asset.Name"
+                                            title="@asset.AssetId">
+                                        @asset.Ticker — @asset.Name — @asset.AssetIdAbbreviatedKeepingHeadAndTail — @asset.SpendableBalance.ToString("N0") spendable
                                     </option>
                                 }
                             </select>
                             <span asp-validation-for="AssetId" class="text-danger"></span>
+                            <div class="form-text" id="selectedContractRow" style="display:none;">
+                                Contract id that will be signed:
+                                <code class="text-break d-block" id="selectedContractId"></code>
+                                Tickers and names are chosen by the issuer and can repeat across contracts;
+                                only the contract id identifies the asset you are sending.
+                            </div>
                         </div>
 
                         <div class="mb-3">
@@ -106,12 +114,12 @@ else
 
                         <div class="alert alert-info">
                             The recipient's RGB invoice contains the delivery address and transport
-                            endpoint. A Bitcoin transaction will be broadcast to anchor the RGB
-                            state transition.
+                            endpoint. After the recipient acknowledges the consignment, rgb-lib will
+                            broadcast the Bitcoin transaction that anchors the RGB state transition.
                         </div>
 
                         <button type="submit" class="btn btn-primary" id="sendBtn"
-                                onclick="if(!this.form.reportValidity()) return false; var sel=document.getElementById('assetSelect'); var ticker=sel.options[sel.selectedIndex].getAttribute('data-ticker')||'tokens'; if(!confirm('Send ' + document.getElementById('amountInput').value + ' ' + ticker + '?')) return false; this.disabled=true; this.innerHTML='<span class=\'fa fa-spinner fa-spin\'></span> Sending...'; this.form.submit(); return false;">
+                                onclick="if(!this.form.reportValidity()) return false; var sel=document.getElementById('assetSelect'); var opt=sel.options[sel.selectedIndex]; var ticker=opt.getAttribute('data-ticker')||'tokens'; var name=opt.getAttribute('data-name')||''; var contractId=sel.value||'(no asset selected)'; if(!confirm('Send ' + document.getElementById('amountInput').value + ' ' + ticker + (name ? ' (' + name + ')' : '') + '\n\nContract id that will be signed:\n' + contractId + '\n\nTickers and names are issuer-chosen and can repeat; only the contract id identifies the asset.')) return false; this.disabled=true; this.innerHTML='<span class=\'fa fa-spinner fa-spin\'></span> Sending...'; this.form.submit(); return false;">
                             <span class="fa fa-paper-plane"></span> Send Asset
                         </button>
                     </form>
@@ -121,7 +129,14 @@ else
     </div>
 
     <script>
+        function renderSelectedContractId() {
+            var contractId = document.getElementById('assetSelect').value;
+            document.getElementById('selectedContractId').textContent = contractId;
+            document.getElementById('selectedContractRow').style.display = contractId ? '' : 'none';
+        }
+
         document.getElementById('assetSelect').addEventListener('change', function() {
+            renderSelectedContractId();
             var opt = this.options[this.selectedIndex];
             var balance = opt.getAttribute('data-balance');
             var ticker = opt.getAttribute('data-ticker');
@@ -146,5 +161,7 @@ else
             var opt = document.getElementById('assetSelect').options[document.getElementById('assetSelect').selectedIndex];
             document.getElementById('amountInput').value = opt.getAttribute('data-balance');
         });
+
+        renderSelectedContractId();
     </script>
 }

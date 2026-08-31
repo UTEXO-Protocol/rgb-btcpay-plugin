@@ -14,32 +14,93 @@ public static class RgbVerifyNative
         NativeLibrary.SetDllImportResolver(typeof(RgbVerifyNative).Assembly, ResolveNative);
     }
 
-    static IntPtr ResolveNative(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
+    // The resolver is registered for the whole plugin assembly, which also declares six
+    // [DllImport("rgblibcffi")] entries: without this guard first, rgb-lib's P/Invokes fall through
+    // to the loop below and are handed an rgbverifycffi handle — every rgb-lib entry point
+    // disappears and the whole wallet path breaks.
+    internal static IntPtr ResolveNative(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
     {
         if (libraryName != Library) return IntPtr.Zero;
 
-        var baseDir = Path.GetDirectoryName(assembly.Location);
-        if (string.IsNullOrEmpty(baseDir)) baseDir = AppContext.BaseDirectory;
+        return TryLoadFromCandidates(ResolveBaseDir(assembly), out var handle, out _, out _, out _)
+            ? handle
+            : IntPtr.Zero;
+    }
 
-        var fileName = OperatingSystem.IsWindows() ? "rgbverifycffi.dll"
+    // Takes the assembly the runtime hands the resolver rather than reading AppContext.BaseDirectory:
+    // under BTCPay's plugin host those differ, and the latter is BTCPay's directory, not the plugin's.
+    internal static string ResolveBaseDir(Assembly assembly)
+    {
+        var baseDir = Path.GetDirectoryName(assembly.Location);
+        return string.IsNullOrEmpty(baseDir) ? AppContext.BaseDirectory : baseDir;
+    }
+
+    internal static string NativeFileName()
+        => OperatingSystem.IsWindows() ? "rgbverifycffi.dll"
             : OperatingSystem.IsMacOS() ? "librgbverifycffi.dylib"
             : "librgbverifycffi.so";
+
+    // Deduped: on .NET 8+ RuntimeInformation.RuntimeIdentifier already equals <os>-<arch> for every
+    // RID we ship, so the two sources would otherwise emit the same candidate twice.
+    internal static IEnumerable<string> CandidatePaths(string baseDir)
+    {
+        var fileName = NativeFileName();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var rid in RuntimeIdentifiers())
         {
             var candidate = Path.Combine(baseDir, "runtimes", rid, "native", fileName);
-            if (File.Exists(candidate) && NativeLibrary.TryLoad(candidate, out var handle))
-                return handle;
+            if (seen.Add(candidate)) yield return candidate;
         }
 
         var flat = Path.Combine(baseDir, fileName);
-        if (File.Exists(flat) && NativeLibrary.TryLoad(flat, out var flatHandle))
-            return flatHandle;
-
-        return IntPtr.Zero;
+        if (seen.Add(flat)) yield return flat;
     }
 
-    static IEnumerable<string> RuntimeIdentifiers()
+    // The startup self-check and the live DllImport resolution path share this loop, so the probe
+    // searches exactly where the real P/Invoke will: parity is structural rather than an assumption
+    // about runtime API semantics. It stops at the first success — loading every present candidate
+    // would dlopen images nothing needs and widen the initializer-abort radius.
+    //
+    // existedButFailed is what lets the diagnostic tell a missing file (a packaging defect) apart
+    // from a present but unloadable one (architecture mismatch, corruption, or a glibc floor newer
+    // than the host) — a different problem with a different fix.
+    //
+    // load exists so the state and ordering tests are deterministic and cross-platform; production
+    // never passes it. A lambda is not a legal parameter default, hence the null coalesce inside.
+    internal static bool TryLoadFromCandidates(string baseDir, out IntPtr handle, out string? winningPath,
+        out IReadOnlyList<string> searched, out IReadOnlyList<string> existedButFailed,
+        Func<string, IntPtr>? load = null)
+    {
+        var loader = load ?? (path => NativeLibrary.TryLoad(path, out var loaded) ? loaded : IntPtr.Zero);
+
+        var tried = new List<string>();
+        var failed = new List<string>();
+        searched = tried;
+        existedButFailed = failed;
+        handle = IntPtr.Zero;
+        winningPath = null;
+
+        foreach (var candidate in CandidatePaths(baseDir))
+        {
+            tried.Add(candidate);
+            if (!File.Exists(candidate)) continue;
+
+            var loaded = loader(candidate);
+            if (loaded != IntPtr.Zero)
+            {
+                handle = loaded;
+                winningPath = candidate;
+                return true;
+            }
+
+            failed.Add(candidate);
+        }
+
+        return false;
+    }
+
+    internal static IEnumerable<string> RuntimeIdentifiers()
     {
         yield return RuntimeInformation.RuntimeIdentifier;
         var os = OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsMacOS() ? "osx" : "linux";
@@ -61,7 +122,8 @@ public static class RgbVerifyNative
         [MarshalAs(UnmanagedType.LPUTF8Str)] string consignmentPath,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string unsignedTxid,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string indexerUrl,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string network);
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string network,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string stockDir);
 
     [DllImport("rgbverifycffi", CallingConvention = CallingConvention.Cdecl)]
     static extern CResultString rgbverify_commitment_check(
@@ -71,16 +133,27 @@ public static class RgbVerifyNative
         ulong entropy);
 
     [DllImport("rgbverifycffi", CallingConvention = CallingConvention.Cdecl)]
+    static extern CResultString rgbverify_validate_v2(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string requestJson);
+
+    [DllImport("rgbverifycffi", CallingConvention = CallingConvention.Cdecl)]
     static extern void rgbverify_string_free(IntPtr ptr);
 
     public static RgbDecodeInvoiceResult DecodeInvoice(string invoice)
         => Deserialize<RgbDecodeInvoiceResult>(Read(rgbverify_decode_invoice(invoice)), "decode_invoice");
 
-    public static RgbValidateResult Validate(string consignmentPath, string unsignedTxid, string indexerUrl, string network)
-        => Deserialize<RgbValidateResult>(Read(rgbverify_validate(consignmentPath, unsignedTxid, indexerUrl, network)), "validate");
+    public static RgbValidateResult Validate(string consignmentPath, string unsignedTxid, string indexerUrl, string network, string stockDir)
+        => Deserialize<RgbValidateResult>(Read(rgbverify_validate(consignmentPath, unsignedTxid, indexerUrl, network, stockDir)), "validate");
 
     public static RgbCommitmentCheckResult CommitmentCheck(string fasciaPath, string unsignedTxid, string opretCommitmentBytes, ulong entropy)
         => Deserialize<RgbCommitmentCheckResult>(Read(rgbverify_commitment_check(fasciaPath, unsignedTxid, opretCommitmentBytes, entropy)), "commitment_check");
+
+    public static RgbValidateV2Result ValidateV2(RgbValidateV2Request request)
+    {
+        RgbNativeSelfCheck.RequireAvailable();
+        var requestJson = JsonSerializer.Serialize(request);
+        return Deserialize<RgbValidateV2Result>(Read(rgbverify_validate_v2(requestJson)), "validate_v2");
+    }
 
     static string Read(CResultString result)
     {

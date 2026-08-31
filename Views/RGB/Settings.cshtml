@@ -1,3 +1,5 @@
+@using BTCPayServer.Plugins.RgbUtexo.Data.Entities
+@using BTCPayServer.Plugins.RgbUtexo.Services
 @model RGBSettingsViewModel
 @{
     ViewData["Title"] = "RGB Wallet Settings";
@@ -13,6 +15,66 @@
 </div>
 
 <partial name="_StatusMessage" />
+
+@if (Model.ReplenishmentNoticeCause != RgbReplenishmentNoticeCause.None)
+{
+    <div class="alert alert-warning" id="rgb-replenishment-notice">
+        <strong>@Model.ReplenishmentNoticeMessage</strong>
+        @if (Model.ReplenishmentNoticeInvitesGrant)
+        {
+            <form method="post" asp-action="SetAutomaticReplenishmentAuthorization"
+                  asp-route-storeId="@Model.StoreId" class="mt-2">
+                <input type="hidden" name="grant" value="true" />
+                <button type="submit" class="btn btn-primary btn-sm" id="rgb-grant-auto-replenishment">
+                    Authorize automatic colorable-UTXO creation
+                </button>
+            </form>
+        }
+    </div>
+}
+
+@if (Model.StoreArchived)
+{
+    <div class="alert alert-warning" id="rgb-archived-notice">
+        <strong>Automatic colorable-UTXO creation is paused because this store is archived.</strong>
+        RGB payments will stop once the current pool of colorable UTXOs is exhausted.
+        Unarchive the store to resume automatic creation, or press <strong>Create UTXOs</strong> to
+        provision manually. Archiving does not stop payments on invoices that already exist from being
+        detected and settled.
+    </div>
+}
+
+@if (Model.VanillaReservationState == RgbVanillaReservationState.LiveAndConstraining)
+{
+    <div class="alert alert-warning" id="rgb-vanilla-reservation-notice">
+        <strong>@Model.VanillaReservationStillUnspentCount reserved BTC output(s) are excluded from this
+        wallet's coin selection.</strong>
+        An earlier colorable-UTXO creation was started and never completed, and its reservation still
+        stands, so the spendable BTC balance reads low and automatic colorable-UTXO creation cannot fund
+        itself.
+        <strong>Remedy:</strong> use <strong>Send BTC</strong> to send from this wallet to an address of
+        your own, then press <strong>Refresh</strong> so the wallet re-syncs. The reserved outputs are
+        spent by that transaction and normal operation resumes. The refresh is required — without it the
+        wallet still believes the outputs are unspent.
+    </div>
+}
+else if (Model.VanillaReservationState == RgbVanillaReservationState.InertAlreadyRecovered)
+{
+    <div class="alert alert-info" id="rgb-vanilla-reservation-notice">
+        @Model.VanillaReservationCount reserved BTC output record(s) remain in this wallet's database, but
+        all of them are already spent, so they exclude nothing and constrain no spend.
+        <strong>This is the expected residue of the send-to-self remedy and is not a fault.</strong>
+        Nothing needs doing.
+    </div>
+}
+else if (Model.VanillaReservationState == RgbVanillaReservationState.Unknown)
+{
+    <div class="alert alert-info" id="rgb-vanilla-reservation-notice">
+        @Model.VanillaReservationCount reserved BTC output record(s) are recorded for this wallet, but
+        their spent-ness could not be determined because the wallet's unspent set is unavailable right
+        now. No conclusion is drawn — reload this page once the connection is healthy.
+    </div>
+}
 
 <div class="row">
     <div class="col-lg-8">
@@ -68,16 +130,24 @@
                             {
                                 <option value="@asset.AssetId"
                                         selected="@(Model.DefaultAssetId == asset.AssetId ? "selected" : null)">
-                                    @asset.Ticker - @asset.Name (@asset.AssetId[..20]...)
+                                    @asset.Ticker - @asset.Name (@asset.AssetIdAbbreviatedKeepingHeadAndTail) — @asset.PricingCode
                                 </option>
                             }
                         </select>
                         <div class="form-text">
-                            @if (Model.AvailableAssets.Count == 0)
+                            @if (Model.ConnectionError is not null)
                             {
                                 <span class="text-warning">
                                     <i class="fa fa-exclamation-triangle"></i>
-                                    No assets found. <a asp-action="IssueAsset" asp-route-storeId="@Model.StoreId">Issue an asset</a> first.
+                                    The NIA asset list could not be read. This wallet may hold assets not shown.
+                                </span>
+                            }
+                            else if (Model.AvailableAssets.Count == 0)
+                            {
+                                <span class="text-warning">
+                                    <i class="fa fa-exclamation-triangle"></i>
+                                    No NIA assets were found. Other asset types may still exist in this wallet.
+                                    <a asp-action="IssueAsset" asp-route-storeId="@Model.StoreId">Issue an NIA asset</a> first.
                                 </span>
                             }
                             else
@@ -106,32 +176,31 @@
                         <div class="col-md-4 mb-3">
                             <label class="form-label">UTXO Count</label>
                             <input type="number" name="UtxoCount" class="form-control" 
-                                   value="@Model.UtxoCount" min="1" max="20" />
+                                   value="@Model.UtxoCount" min="@RgbConfigBounds.UtxoCountMin" max="@RgbConfigBounds.UtxoCountMax" />
                             <div class="form-text">
-                                Number of UTXOs to create (1-20)
+                                Number of UTXOs to create (@RgbConfigBounds.UtxoCountMin-@RgbConfigBounds.UtxoCountMax)
                             </div>
                         </div>
                         <div class="col-md-4 mb-3">
                             <label class="form-label">UTXO Size (sats)</label>
                             <input type="number" name="UtxoSize" class="form-control" 
-                                   value="@Model.UtxoSize" min="546" max="100000" />
+                                   value="@Model.UtxoSize" min="@RgbConfigBounds.UtxoSizeMin" max="@RgbConfigBounds.UtxoSizeMax" />
                             <div class="form-text">
-                                Size of each UTXO in satoshis (min 546)
+                                Size of each UTXO in satoshis (min @RgbConfigBounds.UtxoSizeMin)
                             </div>
                         </div>
                         <div class="col-md-4 mb-3">
                             <label class="form-label">Max Allocations per UTXO</label>
-                            <input type="number" name="MaxAllocationsPerUtxo" class="form-control" 
-                                   value="@Model.MaxAllocationsPerUtxo" min="1" max="50" />
+                            <div class="form-control-plaintext">@Model.MaxAllocationsPerUtxo</div>
                             <div class="form-text">
-                                RGB allocations per UTXO (1-50)
+                                Fixed when the wallet was created.
                             </div>
                         </div>
                     </div>
                     <div class="alert alert-info small">
                         <i class="fa fa-info-circle"></i>
-                        <strong>Note:</strong> Max Allocations applies to newly created wallets only.
-                        Existing wallets retain their original configuration.
+                        <strong>Note:</strong> Max Allocations per UTXO is chosen when the wallet is
+                        created and cannot be changed here. Create a new wallet to use a different value.
                     </div>
 
                     <hr class="my-4" />
@@ -144,7 +213,7 @@
                         <div class="col-md-4 mb-3">
                             <label class="form-label">Min Confirmations</label>
                             <input type="number" name="MinConfirmations" class="form-control"
-                                   value="@Model.MinConfirmations" min="1" max="100" />
+                                   value="@Model.MinConfirmations" min="@RgbConfigBounds.MinConfirmationsMin" max="@RgbConfigBounds.MinConfirmationsMax" />
                             <div class="form-text">
                                 Number of blockchain confirmations required before marking an RGB payment as settled (default: 1)
                             </div>
@@ -154,18 +223,74 @@
                     <hr class="my-4" />
                     <h6 class="mb-3"><i class="fa fa-exchange-alt"></i> Exchange Rate</h6>
 
-                    <div class="form-check mb-2">
-                        <input type="checkbox" name="AllowOneToOneRateFallback" value="true"
-                               class="form-check-input" id="allowFallback"
-                               @(Model.AllowOneToOneRateFallback ? "checked" : "") />
-                        <label class="form-check-label" for="allowFallback">
-                            Allow 1:1 rate fallback when exchange rate is unavailable
-                        </label>
-                    </div>
-                    <div class="alert alert-warning small">
-                        <i class="fa fa-exclamation-triangle"></i>
-                        Enable only for stablecoin assets (e.g., USDT, USDC) where 1:1 rate is correct.
-                        When disabled, invoices will not offer RGB payment if exchange rate is unavailable.
+                    @if (!string.IsNullOrEmpty(Model.PricingCode))
+                    {
+                        <div class="mb-2">
+                            <label class="form-label">Pricing currency code for the selected asset</label>
+                            <code class="user-select-all d-inline-block">@Model.PricingCode</code>
+                        </div>
+
+                        <div class="mb-2">
+                            <label class="form-label">Rate rule template</label>
+                            <div><code class="user-select-all d-inline-block">@Model.SuggestedRateRule</code></div>
+                            <div class="form-text">
+                                Replace <code>&lt;exchange&gt;</code> and <code>&lt;MARKET&gt;</code> with a market
+                                that quotes <strong>this contract</strong>. A rule naming another asset's market
+                                prices this contract at that asset's rate.
+                                This line covers invoices priced in @Model.QuoteCurrency, your store's default.
+                                An invoice created in any other currency needs its own rule for that pair, or
+                                RGB will not be offered on it &mdash; and the alerts on this page only ever
+                                describe @Model.QuoteCurrency. Such an invoice is normally still created
+                                successfully, because BTCPay refuses creation only when no payment method on
+                                it ends up priced or awaiting activation; the RGB refusal naming the missing
+                                pair then appears only in that invoice's own event log.
+                            </div>
+                        </div>
+
+                        <div class="mb-2">
+                            <label class="form-label">Fixed-rate assertion</label>
+                            <div><code class="user-select-all d-inline-block">@Model.SuggestedPegRule</code></div>
+                            <div class="form-text">
+                                Use only if you are asserting that one unit of this contract is worth
+                                one @Model.QuoteCurrency.
+                            </div>
+                        </div>
+
+                        @if (Model.RateRuleMissing)
+                        {
+                            <div class="alert alert-warning small">
+                                <i class="fa fa-exclamation-triangle"></i>
+                                No rate rule names
+                                <code>@Model.PricingCode@("_")@Model.QuoteCurrency</code>, so RGB payment is
+                                not currently being offered. Add a rule naming that exact pair.
+                                @if (Model.UsesDefaultRules)
+                                {
+                                    <div class="mt-2">
+                                        This store uses BTCPay's default exchange rates, which cannot price an RGB
+                                        contract. A rule naming @Model.PricingCode requires rate scripting.
+                                        Enabling it copies your current default rules into the script, so your other
+                                        payment methods keep pricing — but the script is then a fixed snapshot and
+                                        <strong>no longer tracks BTCPay's future changes to the defaults</strong>.
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else if (Model.RateUnresolved)
+                        {
+                            <div class="alert alert-warning small">
+                                <i class="fa fa-exclamation-triangle"></i>
+                                A rate rule names
+                                <code>@Model.PricingCode@("_")@Model.QuoteCurrency</code>, but the rate
+                                source returned no rate for it, so RGB payment is not currently being
+                                offered. Your rules name the right pair &mdash; check the exchange and
+                                market the rule points at, or use the fixed-rate form above.
+                            </div>
+                        }
+                    }
+
+                    <div class="form-text mb-3">
+                        A wildcard rule (<code>X_...</code>) prices every contract and every payment method alike.
+                        Only a rule naming the pricing code above binds the price to this contract.
                     </div>
 
                     <button type="submit" class="btn btn-primary">
@@ -174,6 +299,104 @@
                 </div>
             </div>
         </form>
+
+        <div class="card mb-4" id="rgb-auto-replenishment-card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fa fa-robot"></i> Automatic colorable-UTXO creation</h5>
+            </div>
+            <div class="card-body">
+                <p>
+                    When authorized, this store's RGB wallet will <strong>sign and broadcast on-chain
+                    Bitcoin transactions unattended</strong> — with no operator present and no per-transaction
+                    approval — to keep a pool of colorable UTXOs available for incoming RGB payments.
+                </p>
+                <ul>
+                    <li>Up to <strong>@Model.MaxAutoColorableUtxos</strong> standing colorable UTXOs
+                        (deployment-wide limit).</li>
+                    @if (Model.PersistedUtxoCount.HasValue)
+                    {
+                        <li>Each of the <strong>@Model.PersistedUtxoSize sat</strong> size saved in this
+                            store's payment settings, created
+                            <strong>@Model.PersistedUtxoCount</strong> at a time.</li>
+                        <li>At most once per cooldown period while this server keeps running &mdash; the
+                            cooldown is held in memory only, so a restart can allow one earlier attempt.
+                            Worst case
+                            <strong>@Model.WorstCaseReplenishFeeBaseSats sat</strong> in fees per attempt,
+                            plus <strong>@Model.WorstCaseReplenishFeePerVanillaUtxoSats sat</strong> for
+                            every vanilla BTC UTXO beyond the first that this wallet holds &mdash; the
+                            transaction spends all of them at once.</li>
+                        <li><strong>This plugin's Send BTC cannot spend a colorable UTXO</strong>, so every
+                            one created parks its BTC beyond that button's reach until an RGB send releases
+                            it. This authorization stops at the standing count above, so at the size saved
+                            now it can park at most
+                            <strong>@Model.MaxAutoColorablePrincipalSats sat</strong>, rising to
+                            <strong>@Model.MaxAutoColorablePrincipalCeilingSats sat</strong> if that size is
+                            later raised to the largest these settings allow. Colorable UTXOs this wallet
+                            already holds are additional and were created at whatever size was saved
+                            then.</li>
+                    }
+                    else
+                    {
+                        <li>The size, batch and fee figures cannot be stated because this store has no
+                            saved, in-range RGB payment settings. Automatic creation cannot run without
+                            them either. Save the payment settings above, reload this page, and the exact
+                            figures an authorization would permit will appear here.</li>
+                    }
+                    <li><strong>The trigger includes invoices created by anyone who can reach this store's
+                        public checkout page</strong>, not only invoices you created.</li>
+                </ul>
+                <p>
+                    Status:
+                    @if (Model.AutomaticReplenishmentGranted)
+                    {
+                        <span class="badge bg-success" id="rgb-auto-replenishment-status">Authorized</span>
+                    }
+                    else if (Model.AutomaticReplenishmentDecision == RgbAutoReplenishmentDecision.Granted)
+                    {
+                        <span class="badge bg-warning" id="rgb-auto-replenishment-status">Authorized for a different wallet — re-authorize to use it</span>
+                    }
+                    else if (Model.AutomaticReplenishmentDecision == RgbAutoReplenishmentDecision.Revoked)
+                    {
+                        <span class="badge bg-secondary" id="rgb-auto-replenishment-status">Revoked</span>
+                    }
+                    else
+                    {
+                        <span class="badge bg-secondary" id="rgb-auto-replenishment-status">Not authorized</span>
+                    }
+                    @if (Model.AutomaticReplenishmentDecidedAt.HasValue)
+                    {
+                        <span class="text-muted small">
+                            (last changed @Model.AutomaticReplenishmentDecidedAt.Value.ToString("u"))
+                        </span>
+                    }
+                </p>
+                <form method="post" asp-action="SetAutomaticReplenishmentAuthorization"
+                      asp-route-storeId="@Model.StoreId">
+                    @if (Model.AutomaticReplenishmentGranted)
+                    {
+                        <input type="hidden" name="grant" value="false" />
+                        <button type="submit" class="btn btn-outline-danger" id="rgb-revoke-auto-replenishment">
+                            Revoke authorization
+                        </button>
+                    }
+                    else if (Model.PersistedUtxoCount.HasValue)
+                    {
+                        <input type="hidden" name="grant" value="true" />
+                        <button type="submit" class="btn btn-primary" id="rgb-authorize-auto-replenishment">
+                            Authorize automatic colorable-UTXO creation
+                        </button>
+                    }
+                    else
+                    {
+                        <p class="text-muted mb-0" id="rgb-authorize-auto-replenishment-unavailable">
+                            Save this store's RGB payment settings above, then reload this page, to
+                            authorize automatic colorable-UTXO creation. Authorizing is withheld until the
+                            figures above state what it would permit.
+                        </p>
+                    }
+                </form>
+            </div>
+        </div>
 
         <div class="card mb-4">
             <div class="card-header">
@@ -292,11 +515,52 @@
                 <h5 class="mb-0">Danger Zone</h5>
             </div>
             <div class="card-body">
-                <p class="text-muted">
-                    These actions are irreversible. Make sure you have backed up your wallet before proceeding.
+                <p><strong>Deleting this wallet is irreversible.</strong></p>
+                @if (Model.DeleteBalance is { } deleteBalance && Model.ConnectionError is null)
+                {
+                    <div class="alert alert-warning">
+                        <strong>BTC balances as of the last successful sync</strong>
+                        <ul class="mb-2">
+                            <li>Vanilla BTC — Future: @deleteBalance.Vanilla.Future sats; Settled: @deleteBalance.Vanilla.Settled sats</li>
+                            <li>Colored BTC — Future: @deleteBalance.Colored.Future sats; Settled: @deleteBalance.Colored.Settled sats</li>
+                        </ul>
+                        These figures may be stale and non-exhaustive. Assume this wallet holds additional value not shown.
+                        Value already spent into status-1 or status-2 outbound transfers may not appear in any balance figure.
+                    </div>
+                }
+                else
+                {
+                    <div class="alert alert-danger">
+                        Balances could not be read — assume this wallet holds value.
+                    </div>
+                }
+                @if (Model.ConnectionError is not null)
+                {
+                    <p>The NIA asset list could not be read. This wallet may hold assets not shown.</p>
+                }
+                else if (Model.AvailableAssets.Count == 0)
+                {
+                    <p>No NIA assets were found. Other asset types may still exist in this wallet.</p>
+                }
+                else
+                {
+                    <p>Only NIA assets are listed on this page. This wallet may hold other asset types not shown.</p>
+                }
+                <p>
+                    The wallet data directory retained on disk is watch-only and cannot spend. Restoring from a backup file
+                    still requires the seed phrase. If the seed phrase is not recorded elsewhere, the wallet's assets are gone.
                 </p>
-                <form asp-action="DeleteWallet" asp-route-storeId="@Model.StoreId" method="post"
-                      onsubmit="return confirm('Are you sure you want to delete this wallet? This will remove the wallet from BTCPay (DB records, assets, invoices) but leave the wallet data directory on disk for backup. This action cannot be undone.');">
+                <p>
+                    Deletion destroys the wallet row holding the encrypted mnemonic, the only stored copy of the wallet's
+                    spend authority, plus the payment-method configuration and the store's RGB exclusion flag.
+                </p>
+                <form asp-action="DeleteWallet" asp-route-storeId="@Model.StoreId" method="post">
+                    <div class="form-check mb-3">
+                        <input type="checkbox" class="form-check-input" id="acknowledgedRecoveryPhrase" name="acknowledgedRecoveryPhrase" value="true" required />
+                        <label class="form-check-label" for="acknowledgedRecoveryPhrase">
+                            I have recorded the seed phrase elsewhere and understand that deletion destroys this server's only stored spend authority.
+                        </label>
+                    </div>
                     <button type="submit" class="btn btn-outline-danger">
                         <span class="fa fa-trash"></span> Delete Wallet
                     </button>

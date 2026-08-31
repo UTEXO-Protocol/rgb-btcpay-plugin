@@ -60,12 +60,24 @@ public class RestoreBackupCleanupTests
     }
 
     [Fact]
-    public void RequestSizeLimit_IsPresent()
+    public void RequestSizeLimit_IsPresent_AndIsTheConfigurableBoundNotACompileTimeConstant()
     {
-        var attr = typeof(RGBController)
-            .GetMethod("RestoreFromBackup")!
-            .GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute), false);
-        Assert.Single(attr);
+        var method = typeof(RGBController).GetMethod(nameof(RGBController.RestoreFromBackup))!;
+
+        var bounds = method.GetCustomAttributes(inherit: false)
+            .OfType<BoundRgbBackupUploadToConfiguredLimitAttribute>()
+            .ToList();
+        Assert.Single(bounds);
+
+        Assert.Empty(method.GetCustomAttributes(
+            typeof(Microsoft.AspNetCore.Mvc.RequestSizeLimitAttribute), false));
+
+        Assert.True(
+            RgbRestoreUploadBound.ResolveBytes(new RGBConfiguration())
+                >= Services.RgbBackupValidator.MaxTotalUncompressedBytes,
+            "the upload bound must stay at or above the content budget backup validation admits, or "
+            + "the plugin refuses to restore a backup it produced itself, and the archive is the only "
+            + "recovery route for client-side RGB stock");
     }
 
     [Fact]

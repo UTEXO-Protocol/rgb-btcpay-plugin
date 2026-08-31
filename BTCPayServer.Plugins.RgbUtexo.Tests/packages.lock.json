@@ -8,6 +8,24 @@
         "resolved": "10.0.7",
         "contentHash": "ETphwQ9b2gvTK0ET6cYQY77StbIvSmYHZJdsEOf5AY4YNmol5uIncdqLCJzFgE/KEH1ukRdXTkwSC27hNnltOw=="
       },
+      "Microsoft.AspNetCore.Identity.EntityFrameworkCore": {
+        "type": "Direct",
+        "requested": "[10.0.8, )",
+        "resolved": "10.0.8",
+        "contentHash": "GvUGVaFpAihzb0MEUVunhwFNVI/s9wCtOidbaz4JucM3W/YiMtccki9Gm+qcoxlPxQyGpAxX11bvEghL87TMGA==",
+        "dependencies": {
+          "Microsoft.EntityFrameworkCore.Relational": "10.0.8"
+        }
+      },
+      "Microsoft.EntityFrameworkCore.InMemory": {
+        "type": "Direct",
+        "requested": "[10.0.8, )",
+        "resolved": "10.0.8",
+        "contentHash": "C3T9khx1oiLPrS6ehoSnZptiEuTOIaX60it9SGvCkWTeF5i6+IceK6p7mtx+mkFwWB5qx+v3IhgG51iUEtLq9w==",
+        "dependencies": {
+          "Microsoft.EntityFrameworkCore": "10.0.8"
+        }
+      },
       "Microsoft.Extensions.Caching.Memory": {
         "type": "Direct",
         "requested": "[10.0.8, )",
@@ -31,6 +49,16 @@
         "contentHash": "TT8JfiZnwPrHgqb1Yzxn3Dbr1NxnMGSmXiPJueRe2B6jvUW7zh/1lwGKYKkDiIOf7MFV23nJWiVc8blB5xxLkA==",
         "dependencies": {
           "Newtonsoft.Json": "13.0.1"
+        }
+      },
+      "NBXplorer.Client": {
+        "type": "Direct",
+        "requested": "[5.0.6, )",
+        "resolved": "5.0.6",
+        "contentHash": "5KxsEp3gg7NOVyniehXuiBdqOkn1blZxUJLJWUBNeoVDIFEQnmXmCeU0TBhX2tDZ6TV+S1RLfQBEizOy9a2B9A==",
+        "dependencies": {
+          "NBitcoin": "10.0.1",
+          "NBitcoin.Altcoins": "6.0.3"
         }
       },
       "xunit": {
@@ -355,14 +383,6 @@
           "Newtonsoft.Json.Bson": "1.0.2"
         }
       },
-      "Microsoft.AspNetCore.Identity.EntityFrameworkCore": {
-        "type": "Transitive",
-        "resolved": "10.0.8",
-        "contentHash": "GvUGVaFpAihzb0MEUVunhwFNVI/s9wCtOidbaz4JucM3W/YiMtccki9Gm+qcoxlPxQyGpAxX11bvEghL87TMGA==",
-        "dependencies": {
-          "Microsoft.EntityFrameworkCore.Relational": "10.0.8"
-        }
-      },
       "Microsoft.AspNetCore.JsonPatch": {
         "type": "Transitive",
         "resolved": "10.0.8",
@@ -585,15 +605,6 @@
           "NETStandard.Library": "1.6.1"
         }
       },
-      "NBXplorer.Client": {
-        "type": "Transitive",
-        "resolved": "5.0.6",
-        "contentHash": "5KxsEp3gg7NOVyniehXuiBdqOkn1blZxUJLJWUBNeoVDIFEQnmXmCeU0TBhX2tDZ6TV+S1RLfQBEizOy9a2B9A==",
-        "dependencies": {
-          "NBitcoin": "10.0.1",
-          "NBitcoin.Altcoins": "6.0.3"
-        }
-      },
       "NETStandard.Library": {
         "type": "Transitive",
         "resolved": "1.6.1",
@@ -682,6 +693,11 @@
         "resolved": "0.3.0-beta.30",
         "contentHash": "tSdiDoag8VWynkAoKmDxbP7+SM+u3ibubpbJM9Lu9cFN8VWxRq1mKxcwgOyE7NpUWGjjUCNh8TAC7zgJ/Ot1Hw=="
       },
+      "RgbVerifyCffi": {
+        "type": "Transitive",
+        "resolved": "0.11.1-rc.10-native.2",
+        "contentHash": "n/UVs2Af4v/myBNP5Fpcz8rKZlUtH8SaXB8dpraiDkzqeG+/RmmFQqDZ7+evs8p5wODW87s7hmY21SmZgJU+kA=="
+      },
       "Serilog": {
         "type": "Transitive",
         "resolved": "4.3.0",
@@ -759,6 +775,11 @@
           "Serilog": "4.2.0"
         }
       },
+      "SharpCompress": {
+        "type": "Transitive",
+        "resolved": "0.50.4",
+        "contentHash": "/hxjUR7DEX6mky8/LQXyrnrKioOL6D6veAID1EZpro+q4s02x5dHEYBV3qjEN6lDYYilDoQQ76BcmQj+lRx51w=="
+      },
       "SocketIO.Core": {
         "type": "Transitive",
         "resolved": "3.1.2",
@@ -790,31 +811,39 @@
           "SocketIO.Serializer.SystemTextJson": "3.1.2"
         }
       },
+      "SourceGear.sqlite3": {
+        "type": "Transitive",
+        "resolved": "3.53.3",
+        "contentHash": "PaDT7JwQ00HmXZT1xSGSC0c24A5lVpJYHMrXBuJATdpB2t0nf4Kq9HyPaZhxVW0elPq4XI1s5BLh7qLuObmzFA=="
+      },
       "SQLitePCLRaw.bundle_e_sqlite3": {
         "type": "Transitive",
-        "resolved": "2.1.11",
-        "contentHash": "DC4nA7yWnf4UZdgJDF+9Mus4/cb0Y3Sfgi3gDnAoKNAIBwzkskNAbNbyu+u4atT0ruVlZNJfwZmwiEwE5oz9LQ==",
+        "resolved": "3.0.4",
+        "contentHash": "gg8vENKV/o0pWLI0eJxnTA4X9e63rOvzkCDMAOePDGLieNSHPCGUiJ4CQDqDyNqIf6IPVzD4TOjqY5ACygZkkA==",
         "dependencies": {
-          "SQLitePCLRaw.lib.e_sqlite3": "2.1.11",
-          "SQLitePCLRaw.provider.e_sqlite3": "2.1.11"
+          "SQLitePCLRaw.config.e_sqlite3": "3.0.4",
+          "SourceGear.sqlite3": "3.53.3"
+        }
+      },
+      "SQLitePCLRaw.config.e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "3.0.4",
+        "contentHash": "W2HMmjAZ1v27fbyzZtONCdC8Ma/tTr5wLAIr4Iq7T4oKrYaI4occJ5TBhSdK4pltwBJLQBG5DcQMz+/w9X4bbg==",
+        "dependencies": {
+          "SQLitePCLRaw.provider.e_sqlite3": "3.0.4"
         }
       },
       "SQLitePCLRaw.core": {
         "type": "Transitive",
-        "resolved": "2.1.11",
-        "contentHash": "PK0GLFkfhZzLQeR3PJf71FmhtHox+U3vcY6ZtswoMjrefkB9k6ErNJEnwXqc5KgXDSjige2XXrezqS39gkpQKA=="
-      },
-      "SQLitePCLRaw.lib.e_sqlite3": {
-        "type": "Transitive",
-        "resolved": "2.1.11",
-        "contentHash": "Ev2ytaXiOlWZ4b3R67GZBsemTINslLD1DCJr2xiacpn4tbapu0Q4dHEzSvZSMnVWeE5nlObU3VZN2p81q3XOYQ=="
+        "resolved": "3.0.4",
+        "contentHash": "cOjxfdjE4zQDvDVDUBfucKGXEaYos4l4l+TVwePJEHp/nl9fkgBz/lIVgfMH5dOyKRmNi6RsptUGtZsvsD7iYQ=="
       },
       "SQLitePCLRaw.provider.e_sqlite3": {
         "type": "Transitive",
-        "resolved": "2.1.11",
-        "contentHash": "Y/0ZkR+r0Cg3DQFuCl1RBnv/tmxpIZRU3HUvelPw6MVaKHwYYR8YNvgs0vuNuXCMvlyJ+Fh88U1D4tah1tt6qw==",
+        "resolved": "3.0.4",
+        "contentHash": "L4uiEKeRSXxppkGE4iSpgBgC5lNvw2zEN/hAaxTecUS1+DhC6UEFhHaakSYYvnFq7x16B7DQcaXgXy0SkhSwnw==",
         "dependencies": {
-          "SQLitePCLRaw.core": "2.1.11"
+          "SQLitePCLRaw.core": "3.0.4"
         }
       },
       "SSH.NET": {
@@ -1092,7 +1121,10 @@
           "Microsoft.Data.Sqlite": "[10.0.4, )",
           "NBitcoin": "[10.0.5, )",
           "Npgsql.EntityFrameworkCore.PostgreSQL": "[10.0.2, )",
-          "RgbLib": "[0.3.0-beta.30, )"
+          "RgbLib": "[0.3.0-beta.30, )",
+          "RgbVerifyCffi": "[0.11.1-rc.10-native.2, 0.11.1-rc.10-native.2]",
+          "SQLitePCLRaw.bundle_e_sqlite3": "[3.0.4, )",
+          "SharpCompress": "[0.50.4, )"
         }
       },
       "btcpayserver.rating": {
@@ -1104,6 +1136,13 @@
           "Microsoft.CodeAnalysis.CSharp": "[5.3.0, )",
           "NBitcoin": "[10.0.5, )",
           "Newtonsoft.Json": "[13.0.4, )"
+        }
+      },
+      "rgbrestorehelper": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Bcl.Memory": "[9.0.16, )",
+          "RgbLib": "[0.3.0-beta.30, )"
         }
       }
     }

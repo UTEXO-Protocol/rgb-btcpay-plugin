@@ -16,7 +16,7 @@ public class SendAssetValidationTests
         TransportEndpoints = ["rpc://proxy.example.com:3000/json-rpc"]
     };
 
-    static List<RgbAsset> MakeAssets(string assetId = AssetId, long spendable = 10000) =>
+    static List<RgbAsset> MakeAssets(string assetId = AssetId, ulong spendable = 10000) =>
     [
         new() { AssetId = assetId, Ticker = "USDT", Name = "Tether", Precision = 0, SpendableBalance = spendable }
     ];
@@ -88,7 +88,7 @@ public class SendAssetValidationTests
     {
         var invoice = MakeInvoice(assetId: AssetId, amount: 100);
         var (_, asset) = RGBWalletService.ValidateSendAssetRequest(invoice, AssetId, 100, MakeAssets(spendable: 100));
-        Assert.Equal(100, asset.SpendableBalance);
+        Assert.Equal(100ul, asset.SpendableBalance);
     }
 
     [Fact]

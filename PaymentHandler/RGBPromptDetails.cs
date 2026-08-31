@@ -7,6 +7,7 @@ public class RGBPromptDetails
     public string RecipientId { get; set; } = "";
     public string? AssetId { get; set; }
     public string? AssetTicker { get; set; }
+    public string? PricingCode { get; set; }
     public string? AssetName { get; set; }
     public int AssetPrecision { get; set; } = 0;
     public long AmountInAssetUnits { get; set; }

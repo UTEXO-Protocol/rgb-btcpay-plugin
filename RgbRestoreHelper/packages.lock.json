@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "Microsoft.Bcl.Memory": {
+        "type": "Direct",
+        "requested": "[9.0.16, )",
+        "resolved": "9.0.16",
+        "contentHash": "qZqjNnboH3BXMIkD1FHcESZd9Ttjr1YTwRUPiDulBuvCTKhFW2EFu0PHr+ipec6gGo8Ar2AmjXERRlV3JysBTg=="
+      },
+      "RgbLib": {
+        "type": "Direct",
+        "requested": "[0.3.0-beta.30, )",
+        "resolved": "0.3.0-beta.30",
+        "contentHash": "tSdiDoag8VWynkAoKmDxbP7+SM+u3ibubpbJM9Lu9cFN8VWxRq1mKxcwgOyE7NpUWGjjUCNh8TAC7zgJ/Ot1Hw=="
+      }
+    }
+  }
+}

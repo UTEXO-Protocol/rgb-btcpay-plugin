@@ -16,15 +16,23 @@ public class ReceiveAnyAssetControllerTests
 {
     class RecordingWalletService : IRGBWalletService
     {
+        public Task<RgbVanillaReservationReport> GetVanillaReservationReportAsync(
+            string walletId, CancellationToken ct = default)
+            => Task.FromResult(RgbVanillaReservationInspector.Clean);
+
         public Func<string, Task<RGBWallet?>>? GetWalletForStoreImpl;
         public Func<string, string?, long?, TimeSpan?, string?, int, CancellationToken, Task<RGBInvoice>>? CreateInvoiceImpl;
 
         public Task<RGBWallet?> GetWalletForStoreAsync(string storeId, CancellationToken ct = default)
             => GetWalletForStoreImpl?.Invoke(storeId) ?? Task.FromResult<RGBWallet?>(null);
 
-        public Task<RGBInvoice> CreateInvoiceAsync(string walletId, string? assetId, long? amount, TimeSpan? expiration, string? btcPayInvoiceId = null, int minConfirmations = 1, CancellationToken ct = default)
+        public Task<RGBInvoice> CreateInvoiceAsync(string walletId, string? assetId, long? amount, TimeSpan? expiration, string? btcPayInvoiceId = null, int minConfirmations = 1, long? monitoringExpirationTimestamp = null, CancellationToken ct = default)
             => CreateInvoiceImpl?.Invoke(walletId, assetId, amount, expiration, btcPayInvoiceId, minConfirmations, ct)
                ?? throw new NotImplementedException();
+
+        public Task<RGBWallet?> GetWalletAsync(string walletId, CancellationToken ct = default) => throw new NotImplementedException();
+
+        public Task<RGBAsset?> GetAssetAsync(string walletId, string assetId, CancellationToken ct = default) => throw new NotImplementedException();
 
         public Task<RGBWallet> CreateWalletAsync(string storeId, string selectedNetwork, string? name = null, int? maxAllocationsPerUtxo = null, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<RGBWallet> RestoreWalletAsync(string storeId, string mnemonic, string selectedNetwork, string? name = null, int? maxAllocationsPerUtxo = null, CancellationToken ct = default) => throw new NotImplementedException();
@@ -35,13 +43,13 @@ public class ReceiveAnyAssetControllerTests
         public Task<List<UnspentOutput>> ListUnspentsAsync(string walletId, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<List<BtcTransaction>> ListBtcTransactionsAsync(string walletId, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<RgbAsset> IssueAssetAsync(string walletId, string ticker, string name, long amt, int precision = 0, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task RefreshWalletAsync(string walletId, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<bool> RefreshWalletAsync(string walletId, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<List<RgbTransfer>> GetTransfersAsync(string walletId, string? assetId = null, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<string> BackupWalletAsync(string walletId, string password, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<RGBWallet> RestoreFromBackupAsync(string storeId, string mnemonic, string backupPath, string password, string selectedNetwork, string? name = null, int? maxAllocationsPerUtxo = null, CancellationToken ct = default) => throw new NotImplementedException();
         public Task DeleteWalletAsync(string walletId, CancellationToken ct = default) => throw new NotImplementedException();
         public Task<(string Txid, long AmountSent, long Fee)> SendBtcAsync(string walletId, string destinationAddress, long amountSats, float feeRate, CancellationToken ct = default) => throw new NotImplementedException();
-        public Task<(string Txid, long AmountSent, string AssetId, string AssetTicker, string? BroadcastWarning)> SendAssetAsync(string walletId, string rgbInvoice, string assetId, long amount, float feeRate, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<(string Txid, long AmountSent, string AssetId, string AssetTicker, string? RecoveryAdvisory)> SendAssetAsync(string walletId, string rgbInvoice, string assetId, long amount, float feeRate, CancellationToken ct = default) => throw new NotImplementedException();
     }
 
     static RGBController BuildController(RecordingWalletService wallets)
@@ -55,7 +63,10 @@ public class ReceiveAnyAssetControllerTests
             userManager: null!,
             events: null!,
             cache: null!,
-            btcPayOptions: Options.Create(new BTCPayServerOptions()));
+            btcPayOptions: Options.Create(new BTCPayServerOptions()),
+            rateSource: null!,
+            cfg: new RGBConfiguration(Path.Combine(Path.GetTempPath(), "rgb-controller-tests")),
+            authorizations: null!);
         var httpContext = new DefaultHttpContext();
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
         controller.TempData = new TempDataDictionary(httpContext, new TestTempDataProvider());

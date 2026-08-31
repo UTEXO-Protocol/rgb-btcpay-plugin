@@ -343,10 +343,9 @@ public class MemoryWalletSignerTests
         using var regtest = new MemoryWalletSigner(TestMnemonic, Network.RegTest);
         using var mainnet = new MemoryWalletSigner(TestMnemonic, Network.Main);
 
-        Assert.NotEqual(regtest.XpubVanilla, mainnet.XpubVanilla);
-        Assert.NotEqual(regtest.XpubColored, mainnet.XpubColored);
-        Assert.StartsWith("tpub", regtest.XpubVanilla);
-        Assert.StartsWith("xpub", mainnet.XpubVanilla);
+        Assert.NotEqual(regtest.XpubRgbLibVanilla, mainnet.XpubRgbLibVanilla);
+        Assert.StartsWith("tpub", regtest.XpubRgbLibVanilla);
+        Assert.StartsWith("xpub", mainnet.XpubRgbLibVanilla);
     }
 
     [Fact]
@@ -570,7 +569,7 @@ public class MemoryWalletSignerTests
     }
 
     [Fact]
-    public async Task NonStrict_OwnDerivedOutsideAllowlist_Allowed()
+    public async Task NonStrict_OwnRgbLibDescriptorCoveredOutputOutsideAllowlist_Allowed()
     {
         using var signer = new MemoryWalletSigner(TestMnemonic, Network.RegTest);
         var network = Network.RegTest;
@@ -580,8 +579,8 @@ public class MemoryWalletSignerTests
         var vanillaKey = masterKey.Derive(new KeyPath("m/84'/1'/0'/0/0"));
         var inputAddr = vanillaKey.GetPublicKey().GetAddress(ScriptPubKeyType.Segwit, network);
 
-        var ownOtherKey = masterKey.Derive(new KeyPath("m/84'/1'/0'/1/5"));
-        var ownOtherAddr = ownOtherKey.GetPublicKey().GetAddress(ScriptPubKeyType.Segwit, network);
+        var ownOtherKey = masterKey.Derive(new KeyPath("m/86'/1'/0'/1/5"));
+        var ownOtherAddr = ownOtherKey.GetPublicKey().GetAddress(ScriptPubKeyType.TaprootBIP86, network);
 
         var fundingTx = Transaction.Create(network);
         fundingTx.Outputs.Add(Money.Satoshis(10_000), inputAddr);
@@ -592,9 +591,9 @@ public class MemoryWalletSignerTests
 
         var psbt = PSBT.FromTransaction(tx, network);
         psbt.Inputs[0].WitnessUtxo = fundingTx.Outputs[0];
-        psbt.Outputs[0].HDKeyPaths.Add(
-            ownOtherKey.GetPublicKey(),
-            new RootedKeyPath(fp, new KeyPath("84'/1'/0'/1/5")));
+        psbt.Outputs[0].HDTaprootKeyPaths.Add(
+            ownOtherKey.GetPublicKey().GetTaprootFullPubKey(),
+            new TaprootKeyPath(new RootedKeyPath(fp, new KeyPath("86'/1'/0'/1/5"))));
 
         var policy = new SigningPolicy
         {

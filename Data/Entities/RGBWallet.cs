@@ -30,6 +30,9 @@ public class RGBWallet
     public DateTimeOffset? LastSyncAt { get; set; }
     public bool IsActive { get; set; } = true;
     public int MaxAllocationsPerUtxo { get; set; } = 10;
+    public bool NeedsRecovery { get; set; }
+    public string? InvoiceScanCursor { get; set; }
+    public string? HotInvoiceScanCursor { get; set; }
+    public string? DiscoveryScanCursor { get; set; }
+    public int DiscoveryAssetPage { get; set; }
 }
-
-

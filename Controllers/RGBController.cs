@@ -28,10 +28,13 @@ namespace BTCPayServer.Plugins.RgbUtexo.Controllers;
 [Authorize(AuthenticationSchemes = AuthenticationSchemes.Cookie)]
 [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
 [AutoValidateAntiforgeryToken]
+[RefuseUnlessRouteStoreIsTheAuthorizedStore]
 [Route("stores/{storeId}/rgb")]
 public class RGBController : Controller
 {
     static readonly Newtonsoft.Json.JsonSerializer _blobSerializer = BlobSerializer.CreateSerializer().Serializer;
+    internal const string AutoReplenishmentNotAuthorizedDisclosure =
+        "Automatic colorable-UTXO creation is NOT authorized for this wallet — authorize it on the RGB settings page if you want RGB payments to keep working unattended once the current pool is exhausted.";
     static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> _viewSeedLocks = new();
     readonly IRGBWalletService _wallets;
     readonly StoreRepository _stores;
@@ -42,19 +45,24 @@ public class RGBController : Controller
     readonly EventAggregator _events;
     readonly IMemoryCache _cache;
     readonly BTCPayServerOptions _btcPayOptions;
+    readonly IRgbRateSource _rateSource;
+    readonly RGBConfiguration _cfg;
+    readonly RgbAutoReplenishmentAuthorizationStore _authorizations;
 
     public RGBController(IRGBWalletService wallets, StoreRepository stores,
         PaymentMethodHandlerDictionary handlers, RGBPluginDbContextFactory db, ILogger<RGBController> log,
         UserManager<ApplicationUser> userManager, EventAggregator events, IMemoryCache cache,
-        IOptions<BTCPayServerOptions> btcPayOptions)
+        IOptions<BTCPayServerOptions> btcPayOptions, IRgbRateSource rateSource,
+        RGBConfiguration cfg, RgbAutoReplenishmentAuthorizationStore authorizations)
     {
         _wallets = wallets; _stores = stores; _handlers = handlers; _db = db; _log = log;
         _userManager = userManager; _events = events; _cache = cache;
-        _btcPayOptions = btcPayOptions.Value;
+        _btcPayOptions = btcPayOptions.Value; _rateSource = rateSource;
+        _cfg = cfg; _authorizations = authorizations;
     }
 
     [HttpGet]
-    public async Task<IActionResult> Index(string storeId, bool sync = false)
+    public async Task<IActionResult> Index([FromRoute] string storeId, bool sync = false)
     {
         var wallet = await _wallets.GetWalletForStoreAsync(storeId);
         if (wallet == null)
@@ -116,15 +124,17 @@ public class RGBController : Controller
         }
         catch (Exception ex)
         {
+            _log.LogWarning(ex, "Failed to load RGB wallet overview for store {StoreId}", storeId);
             vm.IsConnected = false;
-            vm.ConnectionError = ex.Message;
+            vm.ConnectionError = RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, $"Failed to load wallet data. {RgbOperatorFacingFailure.EscalateToServerLogs}");
         }
 
         return View(vm);
     }
 
     [HttpGet("setup")]
-    public IActionResult Setup(string storeId)
+    public IActionResult Setup([FromRoute] string storeId)
     {
         var defaultNetwork = MapChainNameToRgbNetwork(_btcPayOptions.NetworkType);
         var networkSettings = NetworkSettings.GetForNetwork(defaultNetwork);
@@ -177,7 +187,8 @@ public class RGBController : Controller
     }
 
     [HttpPost("setup")]
-    public async Task<IActionResult> SetupWallet(string storeId, RGBSetupViewModel model)
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> SetupWallet([FromRoute] string storeId, RGBSetupViewModel model)
     {
         if (await _wallets.GetWalletForStoreAsync(storeId) != null)
             return RedirectToAction(nameof(Index), new { storeId });
@@ -186,13 +197,13 @@ public class RGBController : Controller
         {
             TempData[WellKnownTempData.ErrorMessage] =
                 "You must acknowledge the custodial hot-wallet risk to create a wallet.";
-            model.AvailableNetworks = NetworkSettings.AvailableNetworks;
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
         if (!ModelState.IsValid)
         {
-            model.AvailableNetworks = NetworkSettings.AvailableNetworks;
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
@@ -200,7 +211,7 @@ public class RGBController : Controller
         if (networkError != null)
         {
             TempData[WellKnownTempData.ErrorMessage] = networkError;
-            model.AvailableNetworks = NetworkSettings.AvailableNetworks;
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
@@ -212,7 +223,7 @@ public class RGBController : Controller
             var store = await _stores.FindStore(storeId);
             if (store != null)
             {
-                var config = new RGBPaymentMethodConfig { WalletId = wallet.Id, MaxAllocationsPerUtxo = maxAlloc };
+                var config = new RGBPaymentMethodConfig { WalletId = wallet.Id };
                 store.SetPaymentMethodConfig(_handlers[RGBPlugin.RGBPaymentMethodId], config);
                 var blob = store.GetStoreBlob();
                 blob.SetExcluded(RGBPlugin.RGBPaymentMethodId, true);
@@ -220,19 +231,22 @@ public class RGBController : Controller
                 await _stores.UpdateStore(store);
             }
 
-            TempData["SuccessMessage"] = $"RGB wallet created on {model.SelectedNetwork} with max {maxAlloc} allocations per UTXO!";
+            TempData["SuccessMessage"] = $"RGB wallet created on {model.SelectedNetwork} with max {maxAlloc} allocations per UTXO! " + AutoReplenishmentNotAuthorizedDisclosure;
             return RedirectToAction(nameof(Index), new { storeId });
         }
         catch (Exception ex)
         {
-            ModelState.AddModelError("", ex.Message);
-            model.AvailableNetworks = NetworkSettings.AvailableNetworks;
+            _log.LogError(ex, "Failed to create RGB wallet for store {StoreId}", storeId);
+            ModelState.AddModelError("", RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, $"Failed to create wallet. {RgbOperatorFacingFailure.EscalateToServerLogs}"));
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
     }
 
     [HttpPost("restore")]
-    public async Task<IActionResult> RestoreWallet(string storeId, RGBSetupViewModel model)
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> RestoreWallet([FromRoute] string storeId, RGBSetupViewModel model)
     {
         if (await _wallets.GetWalletForStoreAsync(storeId) != null)
             return RedirectToAction(nameof(Index), new { storeId });
@@ -242,14 +256,14 @@ public class RGBController : Controller
             TempData[WellKnownTempData.ErrorMessage] =
                 "You must acknowledge the custodial hot-wallet risk to create a wallet.";
             model.IsRestore = true;
-            PopulateSetupModel(model);
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
         if (!ValidateMnemonic(model.Mnemonic))
         {
             model.IsRestore = true;
-            PopulateSetupModel(model);
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
@@ -258,7 +272,7 @@ public class RGBController : Controller
         {
             TempData[WellKnownTempData.ErrorMessage] = networkError;
             model.IsRestore = true;
-            PopulateSetupModel(model);
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
@@ -270,7 +284,7 @@ public class RGBController : Controller
             var store = await _stores.FindStore(storeId);
             if (store != null)
             {
-                var config = new RGBPaymentMethodConfig { WalletId = wallet.Id, MaxAllocationsPerUtxo = maxAlloc };
+                var config = new RGBPaymentMethodConfig { WalletId = wallet.Id };
                 store.SetPaymentMethodConfig(_handlers[RGBPlugin.RGBPaymentMethodId], config);
                 var blob = store.GetStoreBlob();
                 blob.SetExcluded(RGBPlugin.RGBPaymentMethodId, true);
@@ -278,21 +292,25 @@ public class RGBController : Controller
                 await _stores.UpdateStore(store);
             }
 
-            TempData["SuccessMessage"] = $"RGB wallet restored on {model.SelectedNetwork}!";
+            TempData["SuccessMessage"] = $"RGB wallet restored on {model.SelectedNetwork}! " + AutoReplenishmentNotAuthorizedDisclosure;
             return RedirectToAction(nameof(Index), new { storeId, sync = true });
         }
         catch (Exception ex)
         {
-            ModelState.AddModelError("", ex.Message);
+            _log.LogError(ex, "Failed to restore RGB wallet from mnemonic for store {StoreId}", storeId);
+            ModelState.AddModelError("", RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, $"Failed to restore wallet. {RgbOperatorFacingFailure.EscalateToServerLogs}"));
             model.IsRestore = true;
-            PopulateSetupModel(model);
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
     }
 
     [HttpPost("restore-backup")]
-    [RequestSizeLimit(5_242_880)]
-    public async Task<IActionResult> RestoreFromBackup(string storeId, RGBSetupViewModel model)
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [BoundRgbBackupUploadToConfiguredLimit]
+    [BoundRgbBackupUploadConcurrency]
+    public async Task<IActionResult> RestoreFromBackup([FromRoute] string storeId, RGBSetupViewModel model)
     {
         if (await _wallets.GetWalletForStoreAsync(storeId) != null)
             return RedirectToAction(nameof(Index), new { storeId });
@@ -302,14 +320,14 @@ public class RGBController : Controller
             TempData[WellKnownTempData.ErrorMessage] =
                 "You must acknowledge the custodial hot-wallet risk to create a wallet.";
             model.IsBackupRestore = true;
-            PopulateSetupModel(model);
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
         if (!ValidateMnemonic(model.Mnemonic))
         {
             model.IsBackupRestore = true;
-            PopulateSetupModel(model);
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
@@ -317,19 +335,29 @@ public class RGBController : Controller
         {
             ModelState.AddModelError("BackupFile", "Backup file is required");
             model.IsBackupRestore = true;
-            PopulateSetupModel(model);
+            PopulateSetupModelAndDropRecoverySecrets(model);
+            return View("Setup", model);
+        }
+
+        var uploadBoundBytes = RgbRestoreUploadBound.ResolveBytes(_cfg);
+        if (RgbRestoreUploadBound.IsOverBound(model.BackupFile.Length, uploadBoundBytes))
+        {
+            ModelState.AddModelError("BackupFile", RgbRestoreUploadBound.RefusalMessage(uploadBoundBytes));
+            model.IsBackupRestore = true;
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
         try
         {
-            await ValidateBackupFileHeader(model.BackupFile);
+            await RgbRestoreValidationGate.RunOneAtATimeOrRefuseAsync(
+                () => ValidateBackupFileHeader(model.BackupFile!));
         }
         catch (InvalidOperationException ex)
         {
             ModelState.AddModelError("BackupFile", ex.Message);
             model.IsBackupRestore = true;
-            PopulateSetupModel(model);
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
@@ -337,7 +365,7 @@ public class RGBController : Controller
         {
             ModelState.AddModelError("BackupPassword", "Backup password is required");
             model.IsBackupRestore = true;
-            PopulateSetupModel(model);
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
@@ -346,13 +374,15 @@ public class RGBController : Controller
         {
             TempData[WellKnownTempData.ErrorMessage] = networkError;
             model.IsBackupRestore = true;
-            PopulateSetupModel(model);
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
 
-        var tempPath = Path.Combine(Path.GetTempPath(), $"rgb-restore-{Guid.NewGuid():N}.rgb");
+        string? uploadDir = null;
         try
         {
+            uploadDir = RgbRestoreUploadStaging.CreateDirectoryForAttempt(_cfg, model.SelectedNetwork);
+            var tempPath = Path.Combine(uploadDir, RgbRestoreUploadStaging.UploadedBackupFileName);
             await using (var stream = System.IO.File.Create(tempPath))
             {
                 await model.BackupFile.CopyToAsync(stream);
@@ -366,7 +396,7 @@ public class RGBController : Controller
             var store = await _stores.FindStore(storeId);
             if (store != null)
             {
-                var config = new RGBPaymentMethodConfig { WalletId = wallet.Id, MaxAllocationsPerUtxo = maxAlloc };
+                var config = new RGBPaymentMethodConfig { WalletId = wallet.Id };
                 store.SetPaymentMethodConfig(_handlers[RGBPlugin.RGBPaymentMethodId], config);
                 var blob = store.GetStoreBlob();
                 blob.SetExcluded(RGBPlugin.RGBPaymentMethodId, true);
@@ -374,25 +404,26 @@ public class RGBController : Controller
                 await _stores.UpdateStore(store);
             }
 
-            TempData["SuccessMessage"] = $"RGB wallet restored from backup on {model.SelectedNetwork}!";
+            TempData["SuccessMessage"] = $"RGB wallet restored from backup on {model.SelectedNetwork}! " + AutoReplenishmentNotAuthorizedDisclosure;
             return RedirectToAction(nameof(Index), new { storeId, sync = true });
         }
         catch (Exception ex)
         {
-            ModelState.AddModelError("", $"Restore failed: {ex.Message}");
+            _log.LogError(ex, "Failed to restore RGB wallet from backup for store {StoreId}", storeId);
+            ModelState.AddModelError("", "Restore failed: " + RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, RgbOperatorFacingFailure.EscalateToServerLogs));
             model.IsBackupRestore = true;
-            PopulateSetupModel(model);
+            PopulateSetupModelAndDropRecoverySecrets(model);
             return View("Setup", model);
         }
         finally
         {
-            if (System.IO.File.Exists(tempPath))
-                System.IO.File.Delete(tempPath);
+            RgbRestoreUploadStaging.DeleteDirectoryForAttemptWithEverythingRgbLibLeftInside(uploadDir, _log);
         }
     }
 
     [HttpGet("assets")]
-    public async Task<IActionResult> Assets(string storeId)
+    public async Task<IActionResult> Assets([FromRoute] string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -407,7 +438,7 @@ public class RGBController : Controller
     }
 
     [HttpGet("assets/issue")]
-    public async Task<IActionResult> IssueAsset(string storeId)
+    public async Task<IActionResult> IssueAsset([FromRoute] string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -416,36 +447,57 @@ public class RGBController : Controller
     }
 
     [HttpPost("assets/issue")]
-    public async Task<IActionResult> IssueAsset(string storeId, RGBIssueAssetViewModel model)
+    public async Task<IActionResult> IssueAsset([FromRoute] string storeId, RGBIssueAssetViewModel model)
     {
         if (!ModelState.IsValid) return View(model);
 
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
 
+        RgbAsset asset;
         try
         {
-            var asset = await _wallets.IssueAssetAsync(wallet.Id, model.Ticker, model.Name, model.Amount, model.Precision);
-            TempData["SuccessMessage"] = $"Issued {asset.Ticker} ({asset.AssetId[..20]}...)";
-            return RedirectToAction(nameof(Assets), new { storeId });
+            asset = await _wallets.IssueAssetAsync(wallet.Id, model.Ticker, model.Name, model.Amount, model.Precision);
         }
         catch (Exception ex)
         {
-            ModelState.AddModelError("", ex.Message);
+            _log.LogError(ex, "Failed to issue RGB asset for wallet {WalletId}", wallet.Id);
+            ModelState.AddModelError("", RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, $"Failed to issue asset. {RgbOperatorFacingFailure.EscalateToServerLogs}"));
             return View(model);
         }
+
+        TempData["SuccessMessage"] =
+            $"Issued {asset.Ticker} ({RGBAssetViewModel.AbbreviateContractIdKeepingHeadAndTail(asset.AssetId)})";
+        return RedirectToAction(nameof(Assets), new { storeId });
     }
 
     [HttpGet("utxos")]
-    public async Task<IActionResult> Utxos(string storeId)
+    public async Task<IActionResult> Utxos([FromRoute] string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
 
-        var unspents = await _wallets.ListUnspentsAsync(wallet.Id);
+        // ListUnspentsAsync now throws when the native call fails instead of returning an empty list, so this
+        // page reports the failure rather than rendering a convincing "0 UTXOs" that is really an error.
+        List<UnspentOutput> unspents;
+        try
+        {
+            unspents = await _wallets.ListUnspentsAsync(wallet.Id);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Could not list UTXOs for wallet {WalletId}", wallet.Id);
+            TempData["ErrorMessage"] = "Could not read this wallet's UTXOs from RGB. Try again in a moment.";
+            return RedirectToAction(nameof(Index), new { storeId });
+        }
+
         await using var ctx = _db.CreateContext();
+        // Shares the listener's predicate so the figure an operator reads while diagnosing a skipped
+        // replenishment matches the one the listener decided on.
         var pendingInvoices = await ctx.RGBInvoices.CountAsync(
-            i => i.WalletId == wallet.Id && i.Status == RGBInvoiceStatus.Pending);
+            RGBInvoiceListener.ActivePendingInvoicePredicate(
+                wallet.Id, DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
 
         return View(new RGBUtxosViewModel
         {
@@ -466,7 +518,7 @@ public class RGBController : Controller
     }
 
     [HttpPost("utxos/create")]
-    public async Task<IActionResult> CreateUtxos(string storeId)
+    public async Task<IActionResult> CreateUtxos([FromRoute] string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -478,42 +530,37 @@ public class RGBController : Controller
 
         try
         {
+            RgbConfigBounds.EnsurePaymentMethodValuesValid(
+                count, size, config?.MinConfirmations ?? 1);
             var created = await _wallets.CreateColorableUtxosAsync(wallet.Id, count, size);
             TempData["SuccessMessage"] = created > 0 ? $"{created} UTXOs created ({size} sats each)" : "UTXOs already available";
         }
         catch (Exception ex)
         {
-            TempData["ErrorMessage"] = ex.Message;
+            _log.LogError(ex, "Failed to create colorable UTXOs for wallet {WalletId}", wallet.Id);
+            TempData["ErrorMessage"] = RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, $"Failed to create UTXOs. {RgbOperatorFacingFailure.EscalateToServerLogs}");
         }
 
         return RedirectToAction(nameof(Utxos), new { storeId });
     }
 
     [HttpGet("send-btc")]
-    public async Task<IActionResult> SendBtc(string storeId)
+    public async Task<IActionResult> SendBtc([FromRoute] string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
 
         var vm = new RGBSendBtcViewModel { StoreId = storeId };
-        try
-        {
-            var balance = await _wallets.GetBtcBalanceAsync(wallet.Id);
-            var unspents = await _wallets.ListUnspentsAsync(wallet.Id);
-            vm.VanillaBalance = balance.Vanilla.Spendable;
-            vm.ColoredBalance = balance.Colored.Spendable;
-            vm.VanillaUtxoCount = unspents.Count(u => !u.Utxo.Colorable);
-        }
-        catch (Exception ex)
-        {
-            TempData["ErrorMessage"] = $"Failed to load wallet data: {ex.Message}";
-        }
+        var failure = await PopulateSendBtcBalance(wallet, vm);
+        if (failure != null)
+            TempData["ErrorMessage"] = $"Failed to load wallet data: {failure}";
 
         return View(vm);
     }
 
     [HttpPost("send-btc")]
-    public async Task<IActionResult> SendBtc(string storeId, RGBSendBtcViewModel model)
+    public async Task<IActionResult> SendBtc([FromRoute] string storeId, RGBSendBtcViewModel model)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -545,27 +592,40 @@ public class RGBController : Controller
         }
         catch (Exception ex)
         {
-            ModelState.AddModelError("", ex.Message);
+            _log.LogError(ex, "Failed to send BTC from wallet {WalletId}", wallet.Id);
+            ModelState.AddModelError("", RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, $"Failed to send BTC. {RgbOperatorFacingFailure.EscalateToServerLogs}"));
             await PopulateSendBtcBalance(wallet, model);
             return View(model);
         }
     }
 
-    async Task PopulateSendBtcBalance(Data.Entities.RGBWallet wallet, RGBSendBtcViewModel model)
+    // Returns null on success, otherwise the failure detail. WHY returned rather than only logged:
+    // the GET handler surfaces the native message to the merchant, and a log-only catch would
+    // silently downgrade that report to nothing.
+    internal async Task<string?> PopulateSendBtcBalance(Data.Entities.RGBWallet wallet, RGBSendBtcViewModel model)
     {
         try
         {
             var balance = await _wallets.GetBtcBalanceAsync(wallet.Id);
             var unspents = await _wallets.ListUnspentsAsync(wallet.Id);
-            model.VanillaBalance = balance.Vanilla.Spendable;
+            model.VanillaBalance = balance.Vanilla.Settled;
+            model.PendingVanillaBalance = Math.Max(0, balance.Vanilla.Future - balance.Vanilla.Settled);
             model.ColoredBalance = balance.Colored.Spendable;
             model.VanillaUtxoCount = unspents.Count(u => !u.Utxo.Colorable);
+            return null;
         }
-        catch (Exception ex) { _log.LogWarning(ex, "Failed to populate balance for send form"); }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Failed to populate balance for send form");
+            model.BalanceUnavailable = true;
+            return RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, RgbOperatorFacingFailure.EscalateToServerLogs);
+        }
     }
 
     [HttpGet("send-asset")]
-    public async Task<IActionResult> SendAsset(string storeId)
+    public async Task<IActionResult> SendAsset([FromRoute] string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -576,7 +636,7 @@ public class RGBController : Controller
     }
 
     [HttpPost("send-asset")]
-    public async Task<IActionResult> SendAsset(string storeId, RGBSendAssetViewModel model)
+    public async Task<IActionResult> SendAsset([FromRoute] string storeId, RGBSendAssetViewModel model)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -591,17 +651,18 @@ public class RGBController : Controller
         {
             var result = await _wallets.SendAssetAsync(
                 wallet.Id, model.RgbInvoice.Trim(), model.AssetId, model.Amount, model.FeeRate);
-            var msg = $"Sent {result.AmountSent:N0} {result.AssetTicker} — Txid: {result.Txid}";
-            if (result.BroadcastWarning != null)
-                TempData[WellKnownTempData.ErrorMessage] = $"{msg}. Warning: {result.BroadcastWarning}";
-            else
-                TempData[WellKnownTempData.SuccessMessage] = msg;
+            var msg = $"Initiated {result.AmountSent:N0} {result.AssetTicker} transfer — Txid: {result.Txid}. "
+                      + "The transaction broadcasts after the recipient acknowledges the consignment";
+            if (result.RecoveryAdvisory != null)
+                msg = $"rgb-lib recorded transfer initiation for Txid: {result.Txid} despite a helper or refresh failure. {result.RecoveryAdvisory}";
+            TempData[WellKnownTempData.SuccessMessage] = msg;
             return RedirectToAction(nameof(Transfers), new { storeId });
         }
         catch (Exception ex)
         {
             _log.LogError(ex, "Failed to send RGB asset");
-            ModelState.AddModelError("", ex is InvalidOperationException or KeyNotFoundException ? ex.Message : "Failed to send asset. Check server logs for details.");
+            ModelState.AddModelError("", RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, $"Failed to send asset. {RgbOperatorFacingFailure.EscalateToServerLogs}"));
             await PopulateSendAssetData(wallet, model);
             return View(model);
         }
@@ -618,7 +679,7 @@ public class RGBController : Controller
     }
 
     [HttpGet("btc-transactions")]
-    public async Task<IActionResult> BtcTransactions(string storeId)
+    public async Task<IActionResult> BtcTransactions([FromRoute] string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -646,25 +707,22 @@ public class RGBController : Controller
         }
         catch (Exception ex)
         {
-            TempData["ErrorMessage"] = $"Failed to load transactions: {ex.Message}";
+            _log.LogWarning(ex, "Failed to load BTC transactions for wallet {WalletId}", wallet.Id);
+            TempData["ErrorMessage"] = "Failed to load transactions: "
+                + RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                    ex, RgbOperatorFacingFailure.EscalateToServerLogs);
             return RedirectToAction(nameof(Index), new { storeId });
         }
     }
 
     [HttpGet("transfers")]
-    public async Task<IActionResult> Transfers(string storeId, string? assetId = null)
+    public async Task<IActionResult> Transfers([FromRoute] string storeId, string? assetId = null)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
 
-        var assets = await _wallets.ListAssetsAsync(wallet.Id);
-        var assetLookup = assets.ToDictionary(a => a.AssetId, a => a.Ticker);
-
-        var allTransfers = new List<RGBTransferViewModel>();
-        foreach (var asset in assets)
-        {
-            var transfers = await _wallets.GetTransfersAsync(wallet.Id, asset.AssetId);
-            allTransfers.AddRange(transfers.Select(t => new RGBTransferViewModel
+        var transfers = await _wallets.GetTransfersAsync(wallet.Id, assetId);
+        var rows = transfers.Select(t => new RGBTransferViewModel
             {
                 Idx = t.Idx,
                 Status = TransferStatus(t.Status),
@@ -672,21 +730,19 @@ public class RGBController : Controller
                 Amount = t.Amount,
                 Txid = t.Txid,
                 RecipientId = t.RecipientId,
-                AssetTicker = asset.Ticker
-            }));
-        }
+                AssetTicker = t.AssetTicker
+            }).ToList();
 
         return View(new RGBTransfersViewModel
         {
             StoreId = storeId,
             SelectedAssetId = assetId,
-            Assets = assets.Select(a => a.ToViewModel()).ToList(),
-            Transfers = allTransfers.OrderByDescending(t => t.Idx).ToList()
+            Transfers = rows
         });
     }
 
     [HttpPost("receive-any-asset")]
-    public async Task<IActionResult> CreateReceiveAnyAsset(string storeId)
+    public async Task<IActionResult> CreateReceiveAnyAsset([FromRoute] string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -701,13 +757,14 @@ public class RGBController : Controller
         catch (Exception ex)
         {
             _log.LogWarning(ex, "Failed to create blind-receive invoice for wallet {WalletId}", wallet.Id);
-            TempData["ErrorMessage"] = ex.Message;
+            TempData["ErrorMessage"] = RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, $"Failed to create a receive invoice. {RgbOperatorFacingFailure.EscalateToServerLogs}");
             return RedirectToAction(nameof(Index), new { storeId });
         }
     }
 
     [HttpGet("receive-any-asset/{rgbInvoiceId}")]
-    public async Task<IActionResult> ReceiveAnyAsset(string storeId, string rgbInvoiceId)
+    public async Task<IActionResult> ReceiveAnyAsset([FromRoute] string storeId, string rgbInvoiceId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -734,7 +791,7 @@ public class RGBController : Controller
     }
 
     [HttpPost("refresh")]
-    public async Task<IActionResult> Refresh(string storeId)
+    public async Task<IActionResult> Refresh([FromRoute] string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -746,23 +803,37 @@ public class RGBController : Controller
         }
         catch (Exception ex)
         {
-            TempData["ErrorMessage"] = ex.Message;
+            _log.LogWarning(ex, "Failed to refresh wallet {WalletId}", wallet.Id);
+            TempData["ErrorMessage"] = RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, $"Failed to refresh wallet. {RgbOperatorFacingFailure.EscalateToServerLogs}");
         }
 
         return RedirectToAction(nameof(Index), new { storeId });
     }
 
     [HttpPost("delete")]
-    public async Task<IActionResult> DeleteWallet(string storeId)
+    public async Task<IActionResult> DeleteWallet([FromRoute] string storeId, bool acknowledgedRecoveryPhrase)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
 
+        if (!acknowledgedRecoveryPhrase)
+        {
+            TempData["ErrorMessage"] = "Record the wallet seed phrase before acknowledging wallet deletion.";
+            return RedirectToAction(nameof(Settings), new { storeId });
+        }
+
         try
         {
             var store = await _stores.FindStore(storeId);
+            Newtonsoft.Json.Linq.JToken? originalConfig = null;
+            var originallyExcluded = false;
             if (store != null)
             {
+                originalConfig = store.GetPaymentMethodConfig(
+                    RGBPlugin.RGBPaymentMethodId)?.DeepClone();
+                originallyExcluded = store.GetStoreBlob().IsExcluded(RGBPlugin.RGBPaymentMethodId);
+
                 store.SetPaymentMethodConfig(_handlers[RGBPlugin.RGBPaymentMethodId], null);
                 var blob = store.GetStoreBlob();
                 blob.SetExcluded(RGBPlugin.RGBPaymentMethodId, true);
@@ -770,12 +841,40 @@ public class RGBController : Controller
                 await _stores.UpdateStore(store);
             }
 
-            await _wallets.DeleteWalletAsync(wallet.Id);
+            try
+            {
+                await _wallets.DeleteWalletAsync(wallet.Id);
+            }
+            catch (Exception deleteError)
+            {
+                if (store != null)
+                {
+                    try
+                    {
+                        store.SetPaymentMethodConfig(
+                            RGBPlugin.RGBPaymentMethodId, originalConfig);
+                        var blob = store.GetStoreBlob();
+                        blob.SetExcluded(RGBPlugin.RGBPaymentMethodId, originallyExcluded);
+                        store.SetStoreBlob(blob);
+                        await _stores.UpdateStore(store);
+                    }
+                    catch (Exception compensationError)
+                    {
+                        throw new AggregateException(
+                            "Wallet deletion failed and store configuration rollback also failed",
+                            deleteError, compensationError);
+                    }
+                }
+                throw;
+            }
             TempData["SuccessMessage"] = "RGB wallet deleted";
         }
         catch (Exception ex)
         {
-            TempData["ErrorMessage"] = $"Failed to delete wallet: {ex.Message}";
+            _log.LogError(ex, "Failed to delete wallet {WalletId}", wallet.Id);
+            TempData["ErrorMessage"] = "Failed to delete wallet: "
+                + RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                    ex, RgbOperatorFacingFailure.EscalateToServerLogs);
             return RedirectToAction(nameof(Settings), new { storeId });
         }
 
@@ -783,7 +882,7 @@ public class RGBController : Controller
     }
 
     [HttpPost("backup")]
-    public async Task<IActionResult> BackupWallet(string storeId, string password)
+    public async Task<IActionResult> BackupWallet([FromRoute] string storeId, string password)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -794,10 +893,16 @@ public class RGBController : Controller
             return RedirectToAction(nameof(Settings), new { storeId });
         }
 
+        if (RestoreProcessRunner.ContainsALineBreakTheSingleLineStdinTransportCannotCarry(password))
+        {
+            TempData["ErrorMessage"] = RestoreProcessRunner.BackupPasswordLineBreakRefusal;
+            return RedirectToAction(nameof(Settings), new { storeId });
+        }
+
         string? tempPath = null;
         try
         {
-            tempPath = await _wallets.BackupWalletAsync(wallet.Id, password);
+            tempPath = await _wallets.BackupWalletAsync(wallet.Id, password, HttpContext.RequestAborted);
             var stream = new FileStream(tempPath, FileMode.Open, FileAccess.Read,
                 FileShare.Read, 4096, FileOptions.DeleteOnClose);
             return File(stream, "application/octet-stream", $"rgb-wallet-backup-{DateTime.UtcNow:yyyyMMdd}.rgb");
@@ -807,13 +912,15 @@ public class RGBController : Controller
             if (tempPath != null && System.IO.File.Exists(tempPath))
                 System.IO.File.Delete(tempPath);
             _log.LogError(ex, "Backup failed for wallet {WalletId}", wallet.Id);
-            TempData["ErrorMessage"] = $"Backup failed: {ex.Message}";
+            TempData["ErrorMessage"] = "Backup failed: "
+                + RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                    ex, RgbOperatorFacingFailure.EscalateToServerLogs);
             return RedirectToAction(nameof(Settings), new { storeId });
         }
     }
 
     [HttpGet("settings")]
-    public async Task<IActionResult> Settings(string storeId)
+    public async Task<IActionResult> Settings([FromRoute] string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -828,15 +935,14 @@ public class RGBController : Controller
             DefaultAssetId = config?.DefaultAssetId,
             UtxoCount = config?.UtxoCount ?? 4,
             UtxoSize = config?.UtxoSize ?? 1000,
-            MaxAllocationsPerUtxo = config?.MaxAllocationsPerUtxo ?? 10,
-            MinConfirmations = config?.MinConfirmations ?? 1,
-            AllowOneToOneRateFallback = config?.AllowOneToOneRateFallback ?? false
+            MinConfirmations = config?.MinConfirmations ?? 1
         };
         await PopulateSettingsViewModel(vm, wallet, storeId);
         return View(vm);
     }
 
-    async Task PopulateSettingsViewModel(RGBSettingsViewModel vm, Data.Entities.RGBWallet wallet, string storeId)
+    async Task PopulateSettingsViewModel(RGBSettingsViewModel vm, Data.Entities.RGBWallet wallet, string storeId,
+        bool preferSubmitted = false)
     {
         var networkSettings = RGBConfiguration.GetNetworkSettings(wallet.Network);
         vm.StoreId = storeId;
@@ -848,6 +954,9 @@ public class RGBController : Controller
         vm.Network = wallet.Network;
         vm.CreatedAt = wallet.CreatedAt;
         vm.ElectrumUrl = networkSettings.ElectrumUrl;
+        // WHY here and not inside either try: both catches only log, so an assignment inside one is
+        // silently skipped on exactly the degraded paths they exist to tolerate.
+        vm.MaxAllocationsPerUtxo = wallet.MaxAllocationsPerUtxo;
 
         try
         {
@@ -857,14 +966,144 @@ public class RGBController : Controller
         }
         catch (Exception ex)
         {
-            vm.ConnectionError = ex.Message;
+            vm.ConnectionError = RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                ex, $"Failed to load wallet assets. {RgbOperatorFacingFailure.EscalateToServerLogs}");
             _log.LogWarning(ex, "RGB wallet connection failed");
         }
+
+        // The notice is advisory and must NEVER fail the settings page, so the WHOLE block —
+        // FindStore, GetRgbConfig, GetStoreBlob and the probe — sits inside one catch.
+        try
+        {
+            var store = await _stores.FindStore(storeId);
+            // On the validation-failure re-render the form redisplays what the merchant submitted, so
+            // the notice must describe that, not what is persisted — otherwise they copy a rule for the
+            // wrong contract. A cleared selection must show nothing, which is why this is a flag rather
+            // than a null-coalesce: "" is a meaningful submitted value.
+            var selectedAssetId = preferSubmitted ? vm.DefaultAssetId : GetRgbConfig(store)?.DefaultAssetId;
+
+            // The whitespace/empty handling lives in RgbPricingNotice.For, which returns None; the
+            // probe is skipped in that case because RgbPricingCode.For would throw on it.
+            if (store is not null)
+            {
+                var quote = store.GetStoreBlob().DefaultCurrency;
+                var probe = string.IsNullOrWhiteSpace(selectedAssetId)
+                    ? null
+                    : await ProbeRateAsync(store, RgbPricingCode.For(selectedAssetId), quote);
+
+                var notice = RgbPricingNotice.For(selectedAssetId, quote, probe);
+                vm.PricingCode = notice.PricingCode;
+                vm.SuggestedRateRule = notice.SuggestedRateRule;
+                vm.SuggestedPegRule = notice.SuggestedPegRule;
+                vm.QuoteCurrency = notice.QuoteCurrency;
+                vm.RateRuleMissing = notice.RateRuleMissing;
+                vm.UsesDefaultRules = notice.UsesDefaultRules;
+                vm.RateUnresolved = notice.RateUnresolved;
+            }
+        }
+        catch (Exception ex)
+        {
+            // Render no notice rather than a wrong one, and never break the page.
+            _log.LogWarning(ex, "RGB pricing notice unavailable for store {StoreId}", storeId);
+        }
+
+        try
+        {
+            var owningStore = await _stores.FindStore(storeId);
+            vm.StoreArchived = owningStore?.Archived == true;
+
+            var grant = await _authorizations.FindAsync(storeId);
+            vm.AutomaticReplenishmentDecision = grant?.Decision ?? RgbAutoReplenishmentDecision.Undecided;
+            vm.AutomaticReplenishmentDecidedAt = grant?.DecidedAt;
+            vm.AutomaticReplenishmentDecidedBy = grant?.DecidedBy;
+            vm.AutomaticReplenishmentGranted =
+                RgbAutoReplenishmentAuthorizationStore.IsGranted(grant, wallet.Id);
+            vm.MaxAutoColorableUtxos = _cfg.MaxAutoColorableUtxos;
+
+            var storedConfig = GetRgbConfig(owningStore);
+            var persistedValuesValid = ArePersistedReplenishmentFiguresValid(storedConfig);
+            if (persistedValuesValid)
+            {
+                vm.PersistedUtxoCount = storedConfig!.UtxoCount;
+                vm.PersistedUtxoSize = storedConfig.UtxoSize;
+                vm.WorstCaseReplenishFeeBaseSats =
+                    RGBWalletService.CreateUtxosMaxFeeSatsAtOneInput(storedConfig.UtxoCount);
+                vm.WorstCaseReplenishFeePerVanillaUtxoSats =
+                    RGBWalletService.CreateUtxosMaxFeeSatsPerAdditionalInput(storedConfig.UtxoCount);
+            }
+
+            vm.ReplenishmentNoticeCause = RgbReplenishmentNotice.Evaluate(
+                paymentMethodEnabled: owningStore != null
+                    && !owningStore.GetStoreBlob().IsExcluded(RGBPlugin.RGBPaymentMethodId),
+                hasStoredConfig: storedConfig != null,
+                configValuesValid: persistedValuesValid,
+                maxAutoColorableUtxos: _cfg.MaxAutoColorableUtxos,
+                standingAuthorizationGranted: vm.AutomaticReplenishmentGranted);
+            vm.ReplenishmentNoticeMessage =
+                RgbReplenishmentNotice.MessageFor(vm.ReplenishmentNoticeCause);
+            vm.ReplenishmentNoticeInvitesGrant =
+                RgbReplenishmentNotice.InvitesGrant(vm.ReplenishmentNoticeCause);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "RGB archived-store notice unavailable for store {StoreId}", storeId);
+        }
+
+        try
+        {
+            var reservations = await _wallets.GetVanillaReservationReportAsync(wallet.Id);
+            vm.VanillaReservationState = reservations.State;
+            vm.VanillaReservationCount = reservations.Reserved.Count;
+            vm.VanillaReservationStillUnspentCount = reservations.StillUnspent.Count;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex,
+                "RGB pending vanilla reservation report unavailable for wallet {WalletId}", wallet.Id);
+        }
+
+        vm.DeleteBalance = null;
+        if (vm.ConnectionError is null)
+        {
+            try
+            {
+                using var balanceReadTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var balance = await _wallets.GetBtcBalanceAsync(
+                    wallet.Id, balanceReadTimeout.Token, sync: false);
+                if (wallet.LastSyncAt is not null
+                    && (balance.Vanilla.Future != 0 || balance.Vanilla.Settled != 0
+                        || balance.Colored.Future != 0 || balance.Colored.Settled != 0))
+                    vm.DeleteBalance = balance;
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex,
+                    "RGB deletion balance unavailable for wallet {WalletId}", wallet.Id);
+            }
+        }
+    }
+
+    // Timeout and Error deliberately set nothing upstream: they say nothing about the store's
+    // configuration, and a transient exchange problem must not tell a correctly-configured merchant
+    // that their rules are wrong.
+    async Task<RgbRateResult> ProbeRateAsync(BTCPayServer.Data.StoreData store, string pricingCode, string quote)
+    {
+        // The rules are part of the key, not just the pair: this notice is what a merchant reloads to
+        // confirm they have FIXED their rule, and rates are edited on a different controller with no
+        // invalidation hook. Keyed on the pair alone, a stale NoRate would keep claiming failure.
+        var fingerprint = RgbPricingNotice.RateRulesFingerprint(store.GetStoreBlob());
+        var key = $"rgb-rate-probe:{store.Id}:{pricingCode}:{quote}:{fingerprint.GetHashCode(StringComparison.Ordinal)}";
+        if (_cache.TryGetValue<RgbRateResult>(key, out var cached) && cached is not null)
+            return cached;
+
+        var result = await _rateSource.FetchAsync(pricingCode, quote, store, default);
+        _cache.Set(key, result, TimeSpan.FromSeconds(60));
+        return result;
     }
 
     [HttpPost("view-seed")]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-    public async Task<IActionResult> ViewSeed(string storeId, [FromForm] string password)
+    public async Task<IActionResult> ViewSeed([FromRoute] string storeId, [FromForm] string password)
     {
         var user = await _userManager.GetUserAsync(User);
         if (user == null) return Unauthorized();
@@ -918,7 +1157,7 @@ public class RGBController : Controller
     }
 
     [HttpPost("test-connection")]
-    public async Task<IActionResult> TestConnection(string storeId)
+    public async Task<IActionResult> TestConnection([FromRoute] string storeId)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
@@ -930,21 +1169,51 @@ public class RGBController : Controller
         }
         catch (Exception ex)
         {
-            TempData["ErrorMessage"] = $"Connection failed: {ex.Message}";
+            _log.LogWarning(ex, "Connection test failed for wallet {WalletId}", wallet.Id);
+            TempData["ErrorMessage"] = "Connection failed: "
+                + RgbOperatorFacingFailure.OperatorFacingLayerMessageOrFallback(
+                    ex, RgbOperatorFacingFailure.EscalateToServerLogs);
         }
 
         return RedirectToAction(nameof(Settings), new { storeId });
     }
 
+    [HttpPost("auto-replenishment")]
+    public async Task<IActionResult> SetAutomaticReplenishmentAuthorization([FromRoute] string storeId, bool grant)
+    {
+        var wallet = await RequireWallet(storeId);
+        if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
+
+        if (grant && !HasPersistedReplenishmentFigures(await _stores.FindStore(storeId)))
+        {
+            TempData["ErrorMessage"] =
+                "Save this store's RGB payment settings first. Automatic colorable-UTXO creation cannot "
+                + "be authorized until the UTXO count and size it would use are saved and in range, "
+                + "because until then the authorization page cannot state what it would permit.";
+            return RedirectToAction(nameof(Settings), new { storeId });
+        }
+
+        await _authorizations.RecordDecisionAsync(
+            storeId,
+            wallet.Id,
+            grant ? RgbAutoReplenishmentDecision.Granted : RgbAutoReplenishmentDecision.Revoked,
+            _userManager.GetUserId(User));
+
+        TempData["SuccessMessage"] = grant
+            ? "Automatic colorable-UTXO creation is now authorized for this store's current RGB wallet."
+            : "Automatic colorable-UTXO creation is no longer authorized for this store.";
+        return RedirectToAction(nameof(Settings), new { storeId });
+    }
+
     [HttpPost("settings")]
-    public async Task<IActionResult> SaveSettings(string storeId, RGBSettingsViewModel model)
+    public async Task<IActionResult> SaveSettings([FromRoute] string storeId, RGBSettingsViewModel model)
     {
         var wallet = await RequireWallet(storeId);
         if (wallet == null) return RedirectToAction(nameof(Setup), new { storeId });
 
         if (!ModelState.IsValid)
         {
-            await PopulateSettingsViewModel(model, wallet, storeId);
+            await PopulateSettingsViewModel(model, wallet, storeId, preferSubmitted: true);
             return View(nameof(Settings), model);
         }
 
@@ -955,16 +1224,7 @@ public class RGBController : Controller
             return RedirectToAction(nameof(Settings), new { storeId });
         }
 
-        var config = new RGBPaymentMethodConfig
-        {
-            WalletId = wallet.Id,
-            DefaultAssetId = string.IsNullOrEmpty(model.DefaultAssetId) ? null : model.DefaultAssetId,
-            UtxoCount = model.UtxoCount is > 0 and <= 20 ? model.UtxoCount : 4,
-            UtxoSize = model.UtxoSize is >= 546 and <= 100000 ? model.UtxoSize : 1000,
-            MaxAllocationsPerUtxo = model.MaxAllocationsPerUtxo is > 0 and <= 50 ? model.MaxAllocationsPerUtxo : 10,
-            MinConfirmations = model.MinConfirmations is >= 1 and <= 100 ? model.MinConfirmations : 1,
-            AllowOneToOneRateFallback = model.AllowOneToOneRateFallback
-        };
+        var config = BuildSettingsConfig(wallet.Id, model);
 
         store.SetPaymentMethodConfig(_handlers[RGBPlugin.RGBPaymentMethodId], config);
 
@@ -977,6 +1237,21 @@ public class RGBController : Controller
         TempData["SuccessMessage"] = "Settings saved";
         return RedirectToAction(nameof(Settings), new { storeId });
     }
+
+    // WHY extracted: SaveSettings reaches the concrete, non-virtual StoreRepository, so the action
+    // itself cannot be exercised in a unit test. Pulling the initialiser out is what makes the
+    // values it produces assertable.
+    // The ternaries the previous version applied here were unreachable: ModelState.IsValid rejects
+    // out-of-range input first, and the [Range] bounds are identical.
+    internal static RGBPaymentMethodConfig BuildSettingsConfig(string walletId, RGBSettingsViewModel model)
+        => new()
+        {
+            WalletId = walletId,
+            DefaultAssetId = string.IsNullOrEmpty(model.DefaultAssetId) ? null : model.DefaultAssetId,
+            UtxoCount = model.UtxoCount,
+            UtxoSize = model.UtxoSize,
+            MinConfirmations = model.MinConfirmations
+        };
 
     async Task<RGBWallet?> RequireWallet(string storeId)
     {
@@ -1022,11 +1297,30 @@ public class RGBController : Controller
         return true;
     }
 
-    void PopulateSetupModel(RGBSetupViewModel model)
+    void PopulateSetupModelAndDropRecoverySecrets(RGBSetupViewModel model)
     {
         model.AvailableNetworks = NetworkSettings.AvailableNetworks;
         model.AllNetworkSettings = BuildAllNetworkSettings();
+        model.Mnemonic = null;
+        model.BackupPassword = null;
+        DropSubmittedValueButKeepValidationErrors(nameof(RGBSetupViewModel.Mnemonic));
+        DropSubmittedValueButKeepValidationErrors(nameof(RGBSetupViewModel.BackupPassword));
     }
+
+    void DropSubmittedValueButKeepValidationErrors(string fieldName)
+    {
+        if (!ModelState.TryGetValue(fieldName, out var entry) || entry == null)
+            return;
+        entry.RawValue = null;
+        entry.AttemptedValue = null;
+    }
+
+    internal static bool ArePersistedReplenishmentFiguresValid(RGBPaymentMethodConfig? storedConfig)
+        => storedConfig != null && RgbConfigBounds.ArePaymentMethodValuesValid(
+            storedConfig.UtxoCount, storedConfig.UtxoSize, storedConfig.MinConfirmations);
+
+    static bool HasPersistedReplenishmentFigures(StoreData? store)
+        => ArePersistedReplenishmentFiguresValid(GetRgbConfig(store));
 
     static RGBPaymentMethodConfig? GetRgbConfig(StoreData? store)
     {
@@ -1036,8 +1330,8 @@ public class RGBController : Controller
     }
 
     static string TransferStatus(int s) => s switch {
-        0 => "Waiting Counterparty", 1 => "Waiting Confirmations", 2 => "Waiting Confirmations",
-        3 => "Settled", 4 => "Failed",
+        1 => "Waiting Counterparty", 2 => "Waiting Confirmations",
+        3 => "Settled", 4 => "Failed", 5 => "Initiated", 6 => "Waiting Safe Height",
         _ => $"Unknown ({s})"
     };
 
@@ -1067,6 +1361,9 @@ static class RgbAssetExtensions
 {
     public static RGBAssetViewModel ToViewModel(this RgbAsset a) => new() {
         AssetId = a.AssetId, Ticker = a.Ticker, Name = a.Name,
+        // ToViewModel has five call sites, two outside any try/catch, and RgbAsset.AssetId defaults
+        // to "" — an unguarded For() would throw and 500 the Assets and Transfers pages.
+        PricingCode = string.IsNullOrWhiteSpace(a.AssetId) ? "" : RgbPricingCode.For(a.AssetId),
         Precision = a.Precision, IssuedSupply = a.IssuedSupply, Balance = a.Balance,
         FutureBalance = a.FutureBalance, SpendableBalance = a.SpendableBalance
     };

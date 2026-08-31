@@ -5,8 +5,8 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <Product>RGB Payments</Product>
-        <Description>Accept RGB (client-side validated assets) payments in BTCPay Server. Issue and receive RGB20 tokens on Bitcoin.</Description>
-        <Version>1.0.9</Version>
+        <Description>Beta: custodial hot-wallet plugin. Accept RGB (client-side validated assets) payments in BTCPay Server. Issue and receive RGB20 tokens on Bitcoin.</Description>
+        <Version>1.0.12</Version>
         <Authors>Utexo</Authors>
         <EmbedUntrackedSources>true</EmbedUntrackedSources>
         <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
@@ -39,6 +39,17 @@
         <Content Remove="BTCPayServer.Plugins.RgbUtexo.Tests\**" />
         <EmbeddedResource Remove="BTCPayServer.Plugins.RgbUtexo.Tests\**" />
         <None Remove="BTCPayServer.Plugins.RgbUtexo.Tests\**" />
+        <Compile Remove="RgbRestoreHelper\**" />
+        <Content Remove="RgbRestoreHelper\**" />
+        <EmbeddedResource Remove="RgbRestoreHelper\**" />
+        <None Remove="RgbRestoreHelper\**" />
+        <!-- This project sits at the repo root, so the nested packaging project's
+             obj/**/*.AssemblyInfo.cs otherwise falls inside the default Compile glob and the build
+             dies with CS0579 duplicate assembly attributes as soon as that project is built. -->
+        <Compile Remove="native/rgb-verify/packaging/**" />
+        <Content Remove="native/rgb-verify/packaging/**" />
+        <EmbeddedResource Remove="native/rgb-verify/packaging/**" />
+        <None Remove="native/rgb-verify/packaging/**" />
     </ItemGroup>
 
     <ItemDefinitionGroup>
@@ -53,10 +64,13 @@
     <ItemGroup>
         <!-- BTCPay Server reference - Plugin Builder uses submodule, local dev uses NArk structure -->
         <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.4" />
+        <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.4" />
         <ProjectReference Include="submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj" Condition="Exists('submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj')" />
         <ProjectReference Include="../NArk/submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj" Condition="!Exists('submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj') And Exists('../NArk/submodules/btcpayserver/BTCPayServer/BTCPayServer.csproj')" />
         
         <PackageReference Include="RgbLib" Version="0.3.0-beta.30" />
+        <PackageReference Include="RgbVerifyCffi" Version="[0.11.1-rc.10-native.2]" />
+        <PackageReference Include="SharpCompress" Version="0.50.4" />
         <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.4">
             <PrivateAssets>all</PrivateAssets>
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -70,17 +84,52 @@
         
         <EmbeddedResource Include="rgb-icon.svg" />
         <None Include="README.md" Pack="true" PackagePath="\" />
-
-        <None Include="native/rgb-verify/runtimes/**">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-            <Pack>true</Pack>
-            <PackagePath>runtimes/%(RecursiveDir)</PackagePath>
-            <Link>runtimes/%(RecursiveDir)%(Filename)%(Extension)</Link>
-        </None>
     </ItemGroup>
 
     <ItemGroup>
         <InternalsVisibleTo Include="BTCPayServer.Plugins.RgbUtexo.Tests" />
     </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="RgbRestoreHelper/RgbRestoreHelper.csproj">
+            <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+        </ProjectReference>
+    </ItemGroup>
+
+    <PropertyGroup>
+        <RestoreHelperOutDir>$(MSBuildProjectDirectory)/RgbRestoreHelper/bin/$(Configuration)/net10.0</RestoreHelperOutDir>
+    </PropertyGroup>
+
+    <!-- Local dev (Debug): BTCPay loads the plugin from bin/Debug via DEBUG_PLUGINS, so the helper
+         must sit next to the plugin DLL in the build output. -->
+    <Target Name="CopyRestoreHelper" AfterTargets="Build">
+        <ItemGroup>
+            <HelperOut Include="$(RestoreHelperOutDir)/RgbRestoreHelper.dll" />
+            <HelperOut Include="$(RestoreHelperOutDir)/RgbRestoreHelper.runtimeconfig.json" />
+            <HelperOut Include="$(RestoreHelperOutDir)/RgbRestoreHelper.deps.json" />
+        </ItemGroup>
+        <Copy SourceFiles="@(HelperOut)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+    </Target>
+
+    <!-- Release/Plugin Builder (dotnet publish): a copy into $(OutDir) is NOT part of the publish
+         set, so the helper must be added to ResolvedFileToPublish or the released .btcpay omits it
+         and every production restore fails closed with "Restore helper not found". The ProjectReference
+         builds the helper before ComputeFilesToPublish, so these files exist by then. -->
+    <Target Name="AddRestoreHelperToPublish" BeforeTargets="ComputeFilesToPublish">
+        <ItemGroup>
+            <ResolvedFileToPublish Include="$(RestoreHelperOutDir)/RgbRestoreHelper.dll">
+                <RelativePath>RgbRestoreHelper.dll</RelativePath>
+                <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            </ResolvedFileToPublish>
+            <ResolvedFileToPublish Include="$(RestoreHelperOutDir)/RgbRestoreHelper.runtimeconfig.json">
+                <RelativePath>RgbRestoreHelper.runtimeconfig.json</RelativePath>
+                <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            </ResolvedFileToPublish>
+            <ResolvedFileToPublish Include="$(RestoreHelperOutDir)/RgbRestoreHelper.deps.json">
+                <RelativePath>RgbRestoreHelper.deps.json</RelativePath>
+                <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+            </ResolvedFileToPublish>
+        </ItemGroup>
+    </Target>
 
 </Project>

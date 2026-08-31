@@ -109,7 +109,7 @@
                             foreach (var alloc in utxo.Allocations)
                             {
                                 <div>
-                                    <code class="small">@alloc.AssetId.Substring(0, 20)...</code>: @alloc.Amount
+                                    <code class="small" title="@alloc.AssetId">@alloc.AssetIdAbbreviatedKeepingHeadAndTail</code>: @alloc.Amount
                                     @if (alloc.Settled)
                                     {
                                         <span class="badge bg-success">Settled</span>

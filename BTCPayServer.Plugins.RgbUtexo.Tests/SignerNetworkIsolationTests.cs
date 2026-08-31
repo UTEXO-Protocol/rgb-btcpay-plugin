@@ -1,5 +1,7 @@
+using System.Text.Json;
 using BTCPayServer.Plugins.RgbUtexo.Services;
 using NBitcoin;
+using RgbLib;
 
 namespace BTCPayServer.Plugins.RgbUtexo.Tests;
 
@@ -8,10 +10,11 @@ public class SignerNetworkIsolationTests
     const string TestMnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
     [Theory]
-    [InlineData("regtest")]
-    [InlineData("testnet")]
-    [InlineData("mainnet")]
-    public void RestoreKeysFromMnemonic_MatchesSigner_Xpubs(string networkName)
+    [InlineData("regtest", "Regtest")]
+    [InlineData("testnet", "Testnet")]
+    [InlineData("mainnet", "Mainnet")]
+    public void SignerXpubRgbLibVanilla_EqualsTheRealBindingsAccountXpubVanilla(
+        string networkName, string rgbLibNetworkName)
     {
         var network = networkName switch
         {
@@ -21,17 +24,17 @@ public class SignerNetworkIsolationTests
             _ => throw new ArgumentException(networkName)
         };
 
+        using var doc = JsonDocument.Parse(RgbLibWallet.RestoreKeys(rgbLibNetworkName, TestMnemonic));
+        var accountXpubVanilla = doc.RootElement.GetProperty("account_xpub_vanilla").GetString();
+
         using var signer = new MemoryWalletSigner(TestMnemonic, network);
 
-        var mnemonicObj = new Mnemonic(TestMnemonic);
-        var masterKey = mnemonicObj.DeriveExtKey();
-        var isTestnet = network != Network.Main;
-        var coinType = isTestnet ? 1 : 0;
-        var vanillaXpub = masterKey.Derive(new KeyPath($"m/84'/{coinType}'/0'")).Neuter().ToString(network);
-        var coloredXpub = masterKey.Derive(new KeyPath($"m/86'/{coinType}'/0'")).Neuter().ToString(network);
-
-        Assert.Equal(signer.XpubVanilla, vanillaXpub);
-        Assert.Equal(signer.XpubColored, coloredXpub);
+        Assert.True(signer.XpubRgbLibVanilla == accountXpubVanilla,
+            $"{networkName}: signer.XpubRgbLibVanilla must equal the pinned rgb-lib binding's "
+            + $"account_xpub_vanilla. Expected '{accountXpubVanilla}', got '{signer.XpubRgbLibVanilla}'. "
+            + "This property exists to be substitutable for rgb-lib's vanilla account xpub; a signer that "
+            + "derives some other account under this name would build a vanilla descriptor BDK cannot "
+            + "authenticate and would refuse every send.");
     }
 
     [Fact]
@@ -41,25 +44,22 @@ public class SignerNetworkIsolationTests
         using var mainnet = new MemoryWalletSigner(TestMnemonic, Network.Main);
         using var testnet = new MemoryWalletSigner(TestMnemonic, Network.TestNet);
 
-        Assert.NotEqual(regtest.XpubVanilla, mainnet.XpubVanilla);
-        Assert.NotEqual(regtest.XpubColored, mainnet.XpubColored);
-        Assert.Equal(regtest.XpubVanilla, testnet.XpubVanilla);
+        Assert.NotEqual(regtest.XpubRgbLibVanilla, mainnet.XpubRgbLibVanilla);
+        Assert.Equal(regtest.XpubRgbLibVanilla, testnet.XpubRgbLibVanilla);
     }
 
     [Fact]
     public void Regtest_UsesCoinType1()
     {
         using var signer = new MemoryWalletSigner(TestMnemonic, Network.RegTest);
-        Assert.StartsWith("tpub", signer.XpubVanilla);
-        Assert.StartsWith("tpub", signer.XpubColored);
+        Assert.StartsWith("tpub", signer.XpubRgbLibVanilla);
     }
 
     [Fact]
     public void Mainnet_UsesCoinType0()
     {
         using var signer = new MemoryWalletSigner(TestMnemonic, Network.Main);
-        Assert.StartsWith("xpub", signer.XpubVanilla);
-        Assert.StartsWith("xpub", signer.XpubColored);
+        Assert.StartsWith("xpub", signer.XpubRgbLibVanilla);
     }
 
     [Fact]
@@ -83,8 +83,8 @@ public class SignerNetworkIsolationTests
 
         Assert.NotNull(regtestSigner);
         Assert.NotNull(mainnetSigner);
-        Assert.StartsWith("tpub", regtestSigner!.XpubVanilla);
-        Assert.StartsWith("xpub", mainnetSigner!.XpubVanilla);
+        Assert.StartsWith("tpub", regtestSigner!.XpubRgbLibVanilla);
+        Assert.StartsWith("xpub", mainnetSigner!.XpubRgbLibVanilla);
     }
 
     [Fact]
@@ -93,11 +93,11 @@ public class SignerNetworkIsolationTests
         var provider = CreateProvider();
         provider.RegisterSigner("wallet-1", TestMnemonic, Network.RegTest);
         var before = provider.GetSignerAsync("wallet-1").GetAwaiter().GetResult();
-        Assert.StartsWith("tpub", before!.XpubVanilla);
+        Assert.StartsWith("tpub", before!.XpubRgbLibVanilla);
 
         provider.RegisterSigner("wallet-1", TestMnemonic, Network.Main);
         var after = provider.GetSignerAsync("wallet-1").GetAwaiter().GetResult();
-        Assert.StartsWith("xpub", after!.XpubVanilla);
+        Assert.StartsWith("xpub", after!.XpubRgbLibVanilla);
     }
 
     static RgbWalletSignerProvider CreateProvider()

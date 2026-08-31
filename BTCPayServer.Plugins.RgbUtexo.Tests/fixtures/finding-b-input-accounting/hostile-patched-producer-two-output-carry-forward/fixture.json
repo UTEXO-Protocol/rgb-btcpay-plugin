@@ -1,0 +1,15 @@
+{
+  "producer": "HOSTILE. rgb-lib 0.3.0-beta.30 with rgb-lib-hostile-producer.patch applied to src/wallet/online.rs. Stock rgb-lib can never emit this shape.",
+  "sentContractId": "rgb:AW5CXJ2Y-IHuHTos-Xqx6mhN-zUQb9pI-ufEEt3i-kkPQxGg",
+  "coSpentForeignContractId": "rgb:elLBkkje-5DgkJGP-VYFlxi1-2wYqMgr-wGA4jDO-T9otMoQ",
+  "coSpentPrevout": "9b8ed9b0d215193a3c91e40cb8d4e9b36663a1ec9490ee6cc8e3354433538eac:1",
+  "unsignedTxid": "96bad8456ecf1b7541cc7345eb4c03fb3f906fa56fc92ebf3f6a18fbd590e0fa",
+  "opretCommitmentBytes": "f20ac3074dc9ca38bf60245a95e8bb13bf72bc4f3bb723502603d4af54b20827",
+  "entropy": 7916130090271177844,
+  "chainNetPrefix": "bcrt",
+  "accountXpubVanilla": "tpubDCfGo75tB9efakPniJ324nyJBmhikjanYwvwdgEqyhLk2WbLMmc5kStuWwv2C4JRifHyWC56HSRFgkHZ1byAc18C6yE9cUnYkA17aWbYcqL",
+  "accountXpubColored": "tpubDCjtEeeyfA2CZ51fxrvmovAFDcjA6ChApLvwdGh9yVWMiba2qffmh96AsT3HsVoSgareu8AdkLN92ezr4tgEYhBxqn8yP1X2sxeYEKiyCXX",
+  "masterFingerprint": "e6ff679e",
+  "throwawayRegtestMnemonicNeverFundedOnAnyLiveNetwork": "praise palace stove catalog tackle habit reflect tuna increase weather thumb girl",
+  "mutations": {}
+}

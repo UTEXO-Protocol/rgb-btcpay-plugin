@@ -17,7 +17,7 @@ namespace BTCPayServer.Plugins.RgbUtexo.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.4")
+                .HasAnnotation("ProductVersion", "10.0.8")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -83,6 +83,9 @@ namespace BTCPayServer.Plugins.RgbUtexo.Migrations
                     b.Property<long?>("ExpirationTimestamp")
                         .HasColumnType("bigint");
 
+                    b.Property<long?>("MonitoringExpirationTimestamp")
+                        .HasColumnType("bigint");
+
                     b.Property<string>("Invoice")
                         .IsRequired()
                         .HasColumnType("text");
@@ -134,12 +137,26 @@ namespace BTCPayServer.Plugins.RgbUtexo.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("DiscoveryScanCursor")
+                        .HasColumnType("text");
+
+                    b.Property<int>("DiscoveryAssetPage")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
                     b.Property<string>("EncryptedMnemonic")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("HotInvoiceScanCursor")
+                        .HasColumnType("text");
+
+                    b.Property<string>("InvoiceScanCursor")
+                        .HasColumnType("text");
 
                     b.Property<DateTimeOffset?>("LastSyncAt")
                         .HasColumnType("timestamp with time zone");
@@ -156,6 +173,11 @@ namespace BTCPayServer.Plugins.RgbUtexo.Migrations
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<bool>("NeedsRecovery")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("Network")
                         .IsRequired()
@@ -180,6 +202,50 @@ namespace BTCPayServer.Plugins.RgbUtexo.Migrations
                         .HasFilter("\"IsActive\" = true");
 
                     b.ToTable("RGB_Wallets", (string)null);
+                });
+
+            modelBuilder.Entity("BTCPayServer.Plugins.RgbUtexo.Data.Entities.RGBStoreAutoReplenishment", b =>
+                {
+                    b.Property<string>("StoreId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("DecidedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DecidedBy")
+                        .HasColumnType("text");
+
+                    b.Property<string>("DecidedForWalletId")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Decision")
+                        .HasColumnType("integer");
+
+                    b.HasKey("StoreId");
+
+                    b.ToTable("RGB_StoreAutoReplenishment", (string)null);
+                });
+
+            modelBuilder.Entity("BTCPayServer.Plugins.RgbUtexo.Data.Entities.RGBStoreNoticeState", b =>
+                {
+                    b.Property<string>("StoreId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset?>("CapDisabledNoticeSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("ConfigOutOfBoundsNoticeSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("NotAuthorizedNoticeSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("PricingCodeHasNoRuleNoticeSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("StoreId");
+
+                    b.ToTable("RGB_StoreNoticeState", (string)null);
                 });
 
             modelBuilder.Entity("BTCPayServer.Plugins.RgbUtexo.Data.Entities.RGBAsset", b =>

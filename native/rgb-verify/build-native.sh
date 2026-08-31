@@ -15,7 +15,7 @@ case "$HOST_TRIPLE" in
   *) echo "unsupported host triple: $HOST_TRIPLE" >&2; exit 1 ;;
 esac
 
-cargo build --release
+cargo build --release --locked
 
 DEST="runtimes/$RID/native"
 mkdir -p "$DEST"

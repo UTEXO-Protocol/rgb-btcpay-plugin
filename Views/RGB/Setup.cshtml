@@ -1,3 +1,4 @@
+@using BTCPayServer.Plugins.RgbUtexo.Services
 @model RGBSetupViewModel
 @{
     ViewData["Title"] = "Setup Utexo Wallet";
@@ -80,9 +81,9 @@
 
                             <div class="mb-3">
                                 <label asp-for="MaxAllocationsPerUtxo" class="form-label">Max Allocations per UTXO</label>
-                                <input asp-for="MaxAllocationsPerUtxo" class="form-control" type="number" min="1" max="50" style="max-width: 150px;" />
+                                <input asp-for="MaxAllocationsPerUtxo" class="form-control" type="number" min="@RgbConfigBounds.AllocationsPerUtxoMin" max="@RgbConfigBounds.AllocationsPerUtxoMax" style="max-width: 150px;" />
                                 <div class="form-text">
-                                    Number of RGB allocations each UTXO can hold (1-50). Higher values = fewer UTXOs needed for receiving payments.
+                                    Number of RGB allocations each UTXO can hold (@RgbConfigBounds.AllocationsPerUtxoMin-@RgbConfigBounds.AllocationsPerUtxoMax). Higher values = fewer UTXOs needed for receiving payments.
                                 </div>
                             </div>
 
@@ -113,7 +114,7 @@
 
                             <div class="mb-3">
                                 <label class="form-label">Recovery Phrase</label>
-                                <textarea name="Mnemonic" class="form-control font-monospace" rows="3" placeholder="Enter your 12 or 24 word recovery phrase separated by spaces">@Model.Mnemonic</textarea>
+                                <textarea name="Mnemonic" class="form-control font-monospace" rows="3" placeholder="Enter your 12 or 24 word recovery phrase separated by spaces"></textarea>
                                 <span asp-validation-for="Mnemonic" class="text-danger"></span>
                                 <div class="form-text">Enter the BIP39 recovery phrase (seed words) of the wallet you want to restore.</div>
                             </div>
@@ -142,9 +143,9 @@
 
                             <div class="mb-3">
                                 <label class="form-label">Max Allocations per UTXO</label>
-                                <input name="MaxAllocationsPerUtxo" class="form-control" type="number" min="1" max="50" value="@Model.MaxAllocationsPerUtxo" style="max-width: 150px;" />
+                                <input name="MaxAllocationsPerUtxo" class="form-control" type="number" min="@RgbConfigBounds.AllocationsPerUtxoMin" max="@RgbConfigBounds.AllocationsPerUtxoMax" value="@Model.MaxAllocationsPerUtxo" style="max-width: 150px;" />
                                 <div class="form-text">
-                                    Number of RGB allocations each UTXO can hold (1-50). Higher values = fewer UTXOs needed for receiving payments.
+                                    Number of RGB allocations each UTXO can hold (@RgbConfigBounds.AllocationsPerUtxoMin-@RgbConfigBounds.AllocationsPerUtxoMax). Higher values = fewer UTXOs needed for receiving payments.
                                 </div>
                             </div>
 
@@ -181,7 +182,7 @@
 
                             <div class="mb-3">
                                 <label class="form-label">Recovery Phrase</label>
-                                <textarea name="Mnemonic" class="form-control font-monospace" rows="3" placeholder="Enter your 12 or 24 word recovery phrase separated by spaces">@(Model.IsBackupRestore ? Model.Mnemonic : "")</textarea>
+                                <textarea name="Mnemonic" class="form-control font-monospace" rows="3" placeholder="Enter your 12 or 24 word recovery phrase separated by spaces"></textarea>
                                 <span asp-validation-for="Mnemonic" class="text-danger"></span>
                                 <div class="form-text">Your seed phrase is needed to restore signing keys for the wallet.</div>
                             </div>
@@ -225,9 +226,9 @@
 
                             <div class="mb-3">
                                 <label class="form-label">Max Allocations per UTXO</label>
-                                <input name="MaxAllocationsPerUtxo" class="form-control" type="number" min="1" max="50" value="@Model.MaxAllocationsPerUtxo" style="max-width: 150px;" />
+                                <input name="MaxAllocationsPerUtxo" class="form-control" type="number" min="@RgbConfigBounds.AllocationsPerUtxoMin" max="@RgbConfigBounds.AllocationsPerUtxoMax" value="@Model.MaxAllocationsPerUtxo" style="max-width: 150px;" />
                                 <div class="form-text">
-                                    Number of RGB allocations each UTXO can hold (1-50). Higher values = fewer UTXOs needed for receiving payments.
+                                    Number of RGB allocations each UTXO can hold (@RgbConfigBounds.AllocationsPerUtxoMin-@RgbConfigBounds.AllocationsPerUtxoMax). Higher values = fewer UTXOs needed for receiving payments.
                                 </div>
                             </div>
 

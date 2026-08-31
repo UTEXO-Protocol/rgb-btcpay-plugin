@@ -13,6 +13,8 @@ rgb-ops = { version = "=0.11.1-rc.10", default-features = false, features = ["se
 rgb-consensus = { version = "=0.11.1-rc.10" }
 rgb-schemas = { version = "=0.11.1-rc.10" }
 rgb-invoicing = { version = "=0.11.1-rc.10" }
+rgb-strict-types = { version = "=1.0.1" }
+bdk_wallet = { version = "=3.0.0", default-features = false, features = ["file_store", "std"] }
 amplify = { version = "=4.8.1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -20,3 +22,6 @@ hex = "0.4"
 
 [build-dependencies]
 cbindgen = "0.29.0"
+
+[dev-dependencies]
+tempfile = "3"

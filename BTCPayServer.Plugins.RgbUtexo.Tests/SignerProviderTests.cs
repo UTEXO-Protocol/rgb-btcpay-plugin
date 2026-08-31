@@ -15,8 +15,7 @@ public class SignerProviderTests
 
         var signer = GetSigner(provider, "wallet-regtest");
         Assert.NotNull(signer);
-        Assert.StartsWith("tpub", signer!.XpubVanilla);
-        Assert.StartsWith("tpub", signer.XpubColored);
+        Assert.StartsWith("tpub", signer!.XpubRgbLibVanilla);
     }
 
     [Fact]
@@ -27,8 +26,7 @@ public class SignerProviderTests
 
         var signer = GetSigner(provider, "wallet-testnet");
         Assert.NotNull(signer);
-        Assert.StartsWith("tpub", signer!.XpubVanilla);
-        Assert.StartsWith("tpub", signer.XpubColored);
+        Assert.StartsWith("tpub", signer!.XpubRgbLibVanilla);
     }
 
     [Fact]
@@ -39,8 +37,7 @@ public class SignerProviderTests
 
         var signer = GetSigner(provider, "wallet-mainnet");
         Assert.NotNull(signer);
-        Assert.StartsWith("xpub", signer!.XpubVanilla);
-        Assert.StartsWith("xpub", signer.XpubColored);
+        Assert.StartsWith("xpub", signer!.XpubRgbLibVanilla);
     }
 
     [Fact]
@@ -55,9 +52,9 @@ public class SignerProviderTests
 
         Assert.NotNull(regtest);
         Assert.NotNull(mainnet);
-        Assert.NotEqual(regtest!.XpubVanilla, mainnet!.XpubVanilla);
-        Assert.StartsWith("tpub", regtest.XpubVanilla);
-        Assert.StartsWith("xpub", mainnet.XpubVanilla);
+        Assert.NotEqual(regtest!.XpubRgbLibVanilla, mainnet!.XpubRgbLibVanilla);
+        Assert.StartsWith("tpub", regtest.XpubRgbLibVanilla);
+        Assert.StartsWith("xpub", mainnet.XpubRgbLibVanilla);
     }
 
     [Fact]
@@ -70,7 +67,7 @@ public class SignerProviderTests
         provider.RegisterSigner("w1", TestMnemonic, Network.Main);
         var second = GetSigner(provider, "w1");
 
-        Assert.NotEqual(first!.XpubVanilla, second!.XpubVanilla);
+        Assert.NotEqual(first!.XpubRgbLibVanilla, second!.XpubRgbLibVanilla);
     }
 
     [Fact]

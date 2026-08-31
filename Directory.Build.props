@@ -7,7 +7,9 @@
     - Microsoft.Bcl.Memory: GHSA-73j8-2gch-69rq (high) — fixed in 9.0.14+
     - MailKit:              GHSA-9j88-vvj5-vhgr (moderate) — fixed in 4.16.0+
   -->
-  <ItemGroup Condition="'$(MSBuildProjectName)' != 'BTCPayServer.Plugins.RgbUtexo' And '$(MSBuildProjectName)' != 'BTCPayServer.Plugins.RgbUtexo.Tests'">
+  <!-- RgbVerifyCffi is excluded because it is a native-only package: inheriting a PackageReference
+       would force a needless restore and risk a leaked dependency in a nuspec that must be empty. -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' != 'BTCPayServer.Plugins.RgbUtexo' And '$(MSBuildProjectName)' != 'BTCPayServer.Plugins.RgbUtexo.Tests' And '$(MSBuildProjectName)' != 'RgbVerifyCffi'">
     <PackageReference Include="Microsoft.Bcl.Memory" Version="9.0.16" />
   </ItemGroup>
 </Project>

@@ -10,26 +10,30 @@ public class RgbLibWalletHandle : IDisposable
     private volatile bool _isDisposed;
     private volatile bool _nativeWalletFreed;
     private int _disposeStarted;
+    private int _deferredDisposeStarted;
     private readonly TimeSpan _disposeTimeout;
     private readonly ILogger? _log;
+    private readonly string? _walletDir;
 
     public string WalletId { get; }
     public bool IsDisposed => _isDisposed;
     public bool NativeWalletFreed => _nativeWalletFreed;
     public DateTime LastAccess { get; private set; }
 
-    public RgbLibWalletHandle(RgbLibWallet wallet, string walletId, ILogger? log = null)
+    public RgbLibWalletHandle(RgbLibWallet wallet, string walletId, string walletDir, ILogger? log = null)
     {
         _wallet = wallet ?? throw new ArgumentNullException(nameof(wallet));
         WalletId = walletId;
+        _walletDir = walletDir;
         _disposeTimeout = TimeSpan.FromSeconds(30);
         _log = log;
         LastAccess = DateTime.UtcNow;
     }
 
-    internal RgbLibWalletHandle(string walletId, TimeSpan disposeTimeout)
+    internal RgbLibWalletHandle(string walletId, TimeSpan disposeTimeout, string? walletDir = null)
     {
         WalletId = walletId;
+        _walletDir = walletDir;
         _disposeTimeout = disposeTimeout;
         LastAccess = DateTime.UtcNow;
     }
@@ -42,6 +46,9 @@ public class RgbLibWalletHandle : IDisposable
         try
         {
             ObjectDisposedException.ThrowIf(IsDisposed, this);
+            using var walletAccess = _walletDir == null
+                ? null
+                : RgbNativeSendLease.AcquireWalletAccess(_walletDir);
             LastAccess = DateTime.UtcNow;
             return operation(_wallet!);
         }
@@ -59,6 +66,9 @@ public class RgbLibWalletHandle : IDisposable
         try
         {
             ObjectDisposedException.ThrowIf(IsDisposed, this);
+            using var walletAccess = _walletDir == null
+                ? null
+                : RgbNativeSendLease.AcquireWalletAccess(_walletDir);
             LastAccess = DateTime.UtcNow;
             operation(_wallet!);
         }
@@ -83,6 +93,9 @@ public class RgbLibWalletHandle : IDisposable
         {
             if (_nativeWalletFreed) return;
 
+            using var walletAccess = _walletDir == null
+                ? null
+                : RgbNativeSendLease.AcquireWalletAccess(_walletDir, allowMarked: true);
             DisposeNativeWallet();
             _nativeWalletFreed = true;
         }
@@ -102,8 +115,22 @@ public class RgbLibWalletHandle : IDisposable
             try
             {
                 _isDisposed = true;
-                DisposeNativeWallet();
-                _nativeWalletFreed = true;
+                try
+                {
+                    using var walletAccess = _walletDir == null
+                        ? null
+                        : RgbNativeSendLease.AcquireWalletAccess(_walletDir, allowMarked: true);
+                    DisposeNativeWallet();
+                    _nativeWalletFreed = true;
+                }
+                catch (Exception ex) when (ex is IOException or RgbWalletQuarantinedException)
+                {
+                    // A foreign staged operation owns the wallet. The cache keeps this disposed
+                    // handle until deferred disposal can take the native-access mutex safely.
+                    _log?.LogWarning(ex,
+                        "RGB wallet handle {WalletId} native disposal deferred while the wallet is leased",
+                        WalletId);
+                }
             }
             finally
             {
@@ -120,6 +147,9 @@ public class RgbLibWalletHandle : IDisposable
 
         GC.SuppressFinalize(this);
     }
+
+    internal bool TryStartDeferredDispose() =>
+        Interlocked.Exchange(ref _deferredDisposeStarted, 1) == 0;
 }
 
 public class RgbLibException : Exception

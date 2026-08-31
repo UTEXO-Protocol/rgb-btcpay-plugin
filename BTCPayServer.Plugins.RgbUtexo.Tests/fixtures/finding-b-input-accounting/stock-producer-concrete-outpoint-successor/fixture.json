@@ -1,0 +1,18 @@
+{
+  "producer": "stock rgb-lib 0.3.0-beta.30 (tag commit 12da9a646d3a85c90e374fddb897c010600b5d58), unmodified",
+  "sentContractId": "rgb:jdopebnl-t8rSwO4-XOLESI1-MaWVVSt-pldaDQZ-8b6~HdE",
+  "coSpentForeignContractId": "rgb:d7xjOj7K-mrxtFTr-KPnHrX2-H27Annx-9ZmtbXD-7ZZmeS0",
+  "coSpentPrevout": "c0dd888c4ebacacd04eaa6bb02180181b3697c1d68e245dc7da07127839703a8:0",
+  "unsignedTxid": "1ee90a99278bf17ead0b74b2691f0b733e7f365d854136ee1f6e9810a7483947",
+  "opretCommitmentBytes": "b28b69e0bee4b994a4c4f314dedc8356e6a0afb76ac5eb8d9e7ad7d8ef8f62aa",
+  "entropy": 9537319772246806805,
+  "chainNetPrefix": "bcrt",
+  "accountXpubVanilla": "tpubDDgmiC8b4SoEibiVNjAWAzBCWKg5VrmzYzKYTQ8f1SwTtVYDNnLCWYiUQMXAvbC62XdYgLXCzLMcpjjvf9PiY1rX8LWqbT9PdMB8AZnXaS3",
+  "accountXpubColored": "tpubDCui4EU5fAGbtLUqafVtp5HucsEvSws6VfsuCmBoUNaRgxe5Tie2mcxakcVXbb9AAcDqGQPSDAdYzKu4xvH27fJiG7nbHWW7V6fFQbyssd9",
+  "masterFingerprint": "11e02fe0",
+  "throwawayRegtestMnemonicNeverFundedOnAnyLiveNetwork": "clerk short smoke august rapid general proof shiver sun taste very decade",
+  "expectedCarryForwardSuccessorKind": "revealedConcreteOutpoint",
+  "expectedCarryForwardSuccessorOutpoint": "f8ddcfab050f7f2eed0ba7a29e1853c9f26162a0534e5122a090eb1cbcdb31d7:1",
+  "expectedCarryForwardDerivationPath": "m/86'/827167'/0'/0/1",
+  "mutations": {}
+}

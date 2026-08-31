@@ -1,0 +1,26 @@
+{
+  "producer": "stock rgb-lib 0.3.0-beta.30 (tag commit 12da9a646d3a85c90e374fddb897c010600b5d58), unmodified",
+  "sentContractId": "rgb:cDieyND8-00Jjypp-yAOYHkH-PCpzoYI-LUUyjtC-nGbg9qI",
+  "coSpentForeignContractId": "rgb:Us8I1j3m-0ONKoft-YJYEswL-WPUosS5-iDlA8j4-je7XjQA",
+  "coSpentPrevout": "77bcc78de3073311060885fee13180fae747effb034055cb5dc7a92fc8df7cb3:0",
+  "unsignedTxid": "a9d0e586b4677359eb0336336f942ca5f025fb75d05d14e983772e4081472641",
+  "opretCommitmentBytes": "bcbd15d19dd3015b572b6a0534d703af1e5bf8bccab4b426c86199089c4bbb61",
+  "entropy": 9161867551417008909,
+  "chainNetPrefix": "bcrt",
+  "accountXpubVanilla": "tpubDDPCcFbrdpvSXXNvqD1FwPaZXGERQjYTRT3R9WXbzY6cCMvUByGtZ8AjN9N4J7s98PxKhxmHTKkS2Do5TJBVrPfBUQLEb5EcmHfkLAvWdw9",
+  "accountXpubColored": "tpubDD2RrAn9o4yB4JY3roM2242EF8gSwnFp5xXeLzbSi1PrWkRYSihLhVZBH7BaXvRcd2Pb2WFzanmTf5iGeipbdHBf8YsFVQLnFBSpMbcpi7X",
+  "masterFingerprint": "2c699b58",
+  "throwawayRegtestMnemonicNeverFundedOnAnyLiveNetwork": "final amateur tonight office bag film ecology south undo aware embody similar",
+  "rgbInvoiceNamingTheSentContract": "rgb:cDieyND8-00Jjypp-yAOYHkH-PCpzoYI-LUUyjtC-nGbg9qI/~/ae/bcrt:utxob:kNBVp0JF-dKN6zvD-dEmk5OF-cJ_3cvX-tUfZmM6-asPmWK2-ALS2e?assignment_name=assetOwner&endpoints=rpc://127.0.0.1:3000/json-rpc",
+  "operatorApprovedAmount": 1,
+  "mutations": {
+    "omittedForeignConsumer": {
+      "fasciaFile": "mutated-fascia-omitted-foreign-consumer.json",
+      "reCommittedOpretCommitmentBytes": "4c2e4142283026a21236f424993dd87157af39707871b355f84d0821b34ba7a5"
+    },
+    "changedForeignAmount": {
+      "fasciaFile": "mutated-fascia-changed-foreign-amount.json",
+      "reCommittedOpretCommitmentBytes": null
+    }
+  }
+}

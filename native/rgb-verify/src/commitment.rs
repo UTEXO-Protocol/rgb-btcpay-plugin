@@ -5,7 +5,7 @@ use std::str::FromStr;
 use amplify::confinement::MediumOrdMap;
 use serde::Serialize;
 
-use rgbcore::commit_verify::mpc::{Commitment, Message, MerkleTree, MultiSource, ProtocolId};
+use rgbcore::commit_verify::mpc::{Commitment, MerkleTree, Message, MultiSource, ProtocolId};
 use rgbcore::commit_verify::{CommitId, TryCommitVerify};
 use rgbcore::Txid;
 use rgbstd::containers::Fascia;
@@ -42,7 +42,10 @@ pub(crate) fn commitment_check(
     let mut messages = BTreeMap::new();
     let mut committed_contract_ids = Vec::new();
     for (contract_id, bundle) in fascia.into_bundles() {
-        messages.insert(ProtocolId::from(contract_id), Message::from(bundle.bundle_id()));
+        messages.insert(
+            ProtocolId::from(contract_id),
+            Message::from(bundle.bundle_id()),
+        );
         committed_contract_ids.push(contract_id.to_string());
     }
     committed_contract_ids.sort();
@@ -59,7 +62,7 @@ pub(crate) fn commitment_check(
     serde_json::to_string(&check).map_err(|e| e.to_string())
 }
 
-fn recompute_commitment(
+pub(crate) fn recompute_commitment(
     messages: &BTreeMap<ProtocolId, Message>,
     entropy: u64,
 ) -> Result<Commitment, String> {
@@ -81,7 +84,10 @@ mod tests {
     use rgbstd::containers::{ConsignmentExt, FileContent, SealWitness, Transfer};
 
     fn real_ids() -> (ProtocolId, Message) {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/consignment_out");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/consignment_out"
+        );
         let consignment = Transfer::load_file(path).unwrap();
         let contract_id = consignment.contract_id();
         let bundle_id = consignment
@@ -168,15 +174,20 @@ mod tests {
     }
 
     fn write_fascia_fixture(name: &str) -> FasciaFixture {
-        let consignment_path =
-            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/consignment_out");
+        let consignment_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/consignment_out"
+        );
         let consignment = Transfer::load_file(consignment_path).unwrap();
         let contract_id = consignment.contract_id();
         let witness_bundle = consignment.bundles.iter().next_back().unwrap();
         let bundle = witness_bundle.bundle.clone();
 
         let mut messages = BTreeMap::new();
-        messages.insert(ProtocolId::from(contract_id), Message::from(bundle.bundle_id()));
+        messages.insert(
+            ProtocolId::from(contract_id),
+            Message::from(bundle.bundle_id()),
+        );
         let commitment = recompute_commitment(&messages, FASCIA_ENTROPY).unwrap();
 
         let mut source = MultiSource::with_static_entropy(FASCIA_ENTROPY);
@@ -193,7 +204,10 @@ mod tests {
         let witness_txid = fascia.witness_id().to_string();
 
         let path = std::env::temp_dir()
-            .join(format!("rgbverify_fascia_{}_{name}.json", std::process::id()))
+            .join(format!(
+                "rgbverify_fascia_{}_{name}.json",
+                std::process::id()
+            ))
             .to_string_lossy()
             .into_owned();
         fs::write(&path, serde_json::to_string(&fascia).unwrap()).unwrap();
@@ -218,8 +232,10 @@ mod tests {
     }
 
     fn write_two_contract_fascia_fixture(name: &str) -> FasciaFixture {
-        let consignment_path =
-            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/consignment_out");
+        let consignment_path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/consignment_out"
+        );
         let consignment = Transfer::load_file(consignment_path).unwrap();
         let contract_id = consignment.contract_id();
         let witness_bundle = consignment.bundles.iter().next_back().unwrap();
@@ -227,7 +243,10 @@ mod tests {
         let foreign_id = ContractId::from([0x11u8; 32]);
 
         let mut single = BTreeMap::new();
-        single.insert(ProtocolId::from(contract_id), Message::from(bundle.bundle_id()));
+        single.insert(
+            ProtocolId::from(contract_id),
+            Message::from(bundle.bundle_id()),
+        );
         let single_commitment = recompute_commitment(&single, FASCIA_ENTROPY).unwrap();
 
         let mut source = MultiSource::with_static_entropy(FASCIA_ENTROPY);
@@ -245,7 +264,10 @@ mod tests {
         let witness_txid = fascia.witness_id().to_string();
 
         let path = std::env::temp_dir()
-            .join(format!("rgbverify_fascia_{}_{name}.json", std::process::id()))
+            .join(format!(
+                "rgbverify_fascia_{}_{name}.json",
+                std::process::id()
+            ))
             .to_string_lossy()
             .into_owned();
         fs::write(&path, serde_json::to_string(&fascia).unwrap()).unwrap();
@@ -274,14 +296,16 @@ mod tests {
         assert_eq!(value["matches"], true);
         assert_eq!(value["witnessIdMatches"], true);
         let committed = value["committedContractIds"].as_array().unwrap();
-        assert_eq!(committed, &[serde_json::Value::from(fixture.contract_id.clone())]);
+        assert_eq!(
+            committed,
+            &[serde_json::Value::from(fixture.contract_id.clone())]
+        );
     }
 
     #[test]
     fn detects_txid_mismatch() {
         let fixture = write_fascia_fixture("txid");
-        let wrong_txid =
-            "0000000000000000000000000000000000000000000000000000000000000000";
+        let wrong_txid = "0000000000000000000000000000000000000000000000000000000000000000";
         let value = run_check(&fixture.path, wrong_txid, &fixture.opret_hex);
         assert_eq!(value["witnessIdMatches"], false);
         assert_eq!(value["matches"], true);
@@ -290,8 +314,7 @@ mod tests {
     #[test]
     fn detects_opret_mismatch() {
         let fixture = write_fascia_fixture("opret");
-        let wrong_opret =
-            "1111111111111111111111111111111111111111111111111111111111111111";
+        let wrong_opret = "1111111111111111111111111111111111111111111111111111111111111111";
         let value = run_check(&fixture.path, &fixture.witness_txid, wrong_opret);
         assert_eq!(value["matches"], false);
     }

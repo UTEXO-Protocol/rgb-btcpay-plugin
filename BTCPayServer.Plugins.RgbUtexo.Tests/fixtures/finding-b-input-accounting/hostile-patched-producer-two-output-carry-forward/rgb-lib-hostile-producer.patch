@@ -1,0 +1,42 @@
+--- a/src/wallet/online.rs
++++ b/src/wallet/online.rs
+@@ -2381,9 +2381,36 @@
+                     &input_outpoints,
+                     unspents.as_slice(),
+                 )?;
+-                extra_builder = extra_builder
+-                    .add_input(opout, state.clone())?
+-                    .add_owned_state_raw(opout.ty, seal, state)?;
++                extra_builder = extra_builder.add_input(opout, state.clone())?;
++                extra_builder = match &state {
++                    AllocatedState::Amount(v) if v.as_u64() >= 3 => {
++                        let mut half = v.as_u64() / 2;
++                        let mut rest = v.as_u64() - half;
++                        if half == rest {
++                            half -= 1;
++                            rest += 1;
++                        }
++                        let seal_rest = self.get_change_seal(
++                            txn,
++                            &btc_change,
++                            &mut change_utxo_option,
++                            &input_outpoints,
++                            unspents.as_slice(),
++                        )?;
++                        extra_builder
++                            .add_owned_state_raw(
++                                opout.ty,
++                                seal,
++                                AllocatedState::Amount(half.into()),
++                            )?
++                            .add_owned_state_raw(
++                                opout.ty,
++                                seal_rest,
++                                AllocatedState::Amount(rest.into()),
++                            )?
++                    }
++                    _ => extra_builder.add_owned_state_raw(opout.ty, seal, state)?,
++                };
+                 let extra_transition = extra_builder.complete_transition()?;
+                 all_transitions
+                     .entry(cid)

@@ -8,7 +8,7 @@ public class RGBAsset
     public string Ticker { get; set; } = "";
     public string Name { get; set; } = "";
     public int Precision { get; set; }
-    public long IssuedSupply { get; set; }
+    public ulong IssuedSupply { get; set; }
     public bool AcceptForPayment { get; set; } = false;
     public string? DisplayName { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;

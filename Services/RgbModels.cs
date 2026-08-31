@@ -23,11 +23,46 @@ public class UtxoInfo
 
 public record Outpoint(string Txid, int Vout);
 
+public sealed record UnspentWithConfirmation(Outpoint Outpoint, bool ConfirmedInABlock);
+
 public class RgbAllocation
 {
     [JsonPropertyName("asset_id")] public string AssetId { get; set; } = "";
-    [JsonPropertyName("amount")] public long Amount { get; set; }
+    public ulong Amount { get; set; }
     [JsonPropertyName("settled")] public bool Settled { get; set; }
+}
+
+public static class RgbAssignmentJson
+{
+    public static ulong FungibleValueOrZeroForEveryOtherVariant(JsonElement assignment)
+    {
+        if (assignment.ValueKind != JsonValueKind.Object) return 0;
+        if (!assignment.TryGetProperty("Fungible", out var fungible)) return 0;
+        if (fungible.ValueKind != JsonValueKind.Number) return 0;
+        return fungible.TryGetUInt64(out var value) ? value : 0;
+    }
+
+    public static ulong SumFungibleSaturatingRatherThanWrapping(string? assignmentArrayJson)
+    {
+        if (string.IsNullOrWhiteSpace(assignmentArrayJson)) return 0;
+        JsonDocument document;
+        try { document = JsonDocument.Parse(assignmentArrayJson); }
+        catch (JsonException) { return 0; }
+        using (document)
+        {
+            if (document.RootElement.ValueKind != JsonValueKind.Array) return 0;
+            var total = 0UL;
+            foreach (var assignment in document.RootElement.EnumerateArray())
+            {
+                var value = FungibleValueOrZeroForEveryOtherVariant(assignment);
+                total = value > ulong.MaxValue - total ? ulong.MaxValue : total + value;
+            }
+            return total;
+        }
+    }
+
+    public static long ToSignedByUnderReportingNeverOverReporting(ulong total)
+        => total > long.MaxValue ? long.MaxValue : (long)total;
 }
 
 public class RgbAsset
@@ -36,10 +71,10 @@ public class RgbAsset
     [JsonPropertyName("ticker")] public string Ticker { get; set; } = "";
     [JsonPropertyName("name")] public string Name { get; set; } = "";
     [JsonPropertyName("precision")] public int Precision { get; set; }
-    [JsonPropertyName("issued_supply")] public long IssuedSupply { get; set; }
-    public long Balance { get; set; }
-    public long FutureBalance { get; set; }
-    public long SpendableBalance { get; set; }
+    [JsonPropertyName("issued_supply")] public ulong IssuedSupply { get; set; }
+    public ulong Balance { get; set; }
+    public ulong FutureBalance { get; set; }
+    public ulong SpendableBalance { get; set; }
 }
 
 public class InvoiceResponse
@@ -61,7 +96,11 @@ public class RgbTransfer
     [JsonPropertyName("txid")] public string? Txid { get; set; }
     [JsonPropertyName("recipient_id")] public string? RecipientId { get; set; }
     [JsonPropertyName("receive_utxo")] public Outpoint? ReceiveUtxo { get; set; }
+    public string? AssetId { get; set; }
+    public string AssetTicker { get; set; } = "";
 }
+
+public sealed record RgbMatchedTransfer(string AssetId, RgbAsset Asset, RgbTransfer Transfer);
 
 public class BtcTransaction
 {
@@ -106,4 +145,3 @@ public class RgbInvoiceData
     [JsonPropertyName("expiration_timestamp")] public long ExpirationTimestamp { get; set; }
     [JsonPropertyName("transport_endpoints")] public List<string> TransportEndpoints { get; set; } = [];
 }
-

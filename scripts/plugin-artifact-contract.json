@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "plugin": {
+    "required_root_files": [
+      "btcpay.plugin.json",
+      "BTCPayServer.Plugins.RgbUtexo.dll",
+      "BTCPayServer.Plugins.RgbUtexo.deps.json",
+      "RgbRestoreHelper.dll",
+      "RgbRestoreHelper.deps.json",
+      "RgbRestoreHelper.runtimeconfig.json",
+      "SharpCompress.dll"
+    ],
+    "forbidden_root_files": [
+      "BTCPayServer.dll"
+    ],
+    "helper_basename": "RgbRestoreHelper",
+    "dependency_manifests": {
+      "BTCPayServer.Plugins.RgbUtexo.deps.json": {
+        "RgbLib": {
+          "runtime": "RgbLib.dll"
+        },
+        "SharpCompress": {
+          "runtime": "SharpCompress.dll"
+        }
+      },
+      "RgbRestoreHelper.deps.json": {
+        "RgbLib": {
+          "runtime": "RgbLib.dll"
+        }
+      }
+    },
+    "supported_rids": {
+      "linux-x64": {
+        "gate": "runtimes/linux-x64/native/librgbverifycffi.so",
+        "core": "runtimes/linux-x64/native/librgblibcffi.so"
+      }
+    }
+  },
+  "packages": {
+    "gate": "RgbVerifyCffi",
+    "core": "RgbLib"
+  },
+  "gate_package": {
+    "id": "RgbVerifyCffi",
+    "required_assets": {
+      "linux-x64": "runtimes/linux-x64/native/librgbverifycffi.so",
+      "linux-arm64": "runtimes/linux-arm64/native/librgbverifycffi.so",
+      "osx-arm64": "runtimes/osx-arm64/native/librgbverifycffi.dylib"
+    },
+    "placeholder": "lib/net8.0/_._"
+  }
+}

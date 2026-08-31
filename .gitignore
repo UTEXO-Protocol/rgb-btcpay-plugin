@@ -12,5 +12,11 @@ obj/
 .DS_Store
 Thumbs.db
 
+# Python verifier test caches
+__pycache__/
+*.pyc
 
-
+# Local NuGet feed for locally packed natives (see scripts/pack-rgbverify.sh).
+# Deliberately NOT a source in nuget.config: a folder source that cannot exist in a fresh clone
+# fails restore with NU1301 for every consumer, including the Plugin Builder.
+local-nuget-feed/

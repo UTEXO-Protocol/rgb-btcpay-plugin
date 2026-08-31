@@ -64,7 +64,8 @@ public class ElectrumClient : IBitcoinChainClient
         if (useSsl)
         {
             var ssl = new SslStream(_tcp.GetStream(), false);
-            await ssl.AuthenticateAsClientAsync(host);
+            await ssl.AuthenticateAsClientAsync(
+                new SslClientAuthenticationOptions { TargetHost = host }, ct);
             _stream = ssl;
         }
         else
@@ -121,16 +122,31 @@ public class ElectrumClient : IBitcoinChainClient
         return result.GetString()!;
     }
 
-    public async Task<IReadOnlyList<Outpoint>> ListUnspentByScriptAsync(Script script, CancellationToken ct = default)
+    public async Task<IReadOnlyList<UnspentWithConfirmation>> ListUnspentWithConfirmationByScriptAsync(
+        Script script, CancellationToken ct = default)
     {
         var scriptHash = ScriptHash(script);
         var result = await RequestAsync("blockchain.scripthash.listunspent", [scriptHash], ct);
-        var outpoints = new List<Outpoint>();
+        return ReadUnspentRows(result);
+    }
+
+    internal static IReadOnlyList<UnspentWithConfirmation> ReadUnspentRows(JsonElement result)
+    {
+        var rows = new List<UnspentWithConfirmation>();
         foreach (var item in result.EnumerateArray())
-            outpoints.Add(new Outpoint(
-                item.GetProperty("tx_hash").GetString()!,
-                item.GetProperty("tx_pos").GetInt32()));
-        return outpoints;
+        {
+            var confirmed = item.ValueKind == JsonValueKind.Object
+                && item.TryGetProperty("height", out var height)
+                && height.ValueKind == JsonValueKind.Number
+                && height.GetInt64() > 0;
+
+            rows.Add(new UnspentWithConfirmation(
+                new Outpoint(
+                    item.GetProperty("tx_hash").GetString()!,
+                    item.GetProperty("tx_pos").GetInt32()),
+                confirmed));
+        }
+        return rows;
     }
 
     static readonly Regex TxidShape = new("^[0-9a-fA-F]{64}$", RegexOptions.Compiled);

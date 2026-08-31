@@ -19,18 +19,36 @@
         <div class="card mb-4">
             <div class="card-body">
                 <h5 class="card-title">Available Balance</h5>
-                <div class="d-flex justify-content-between mb-2">
-                    <span>Vanilla (sendable)</span>
-                    <strong>@Model.VanillaBalance.ToString("N0") sats</strong>
-                </div>
-                <div class="d-flex justify-content-between mb-2 text-muted">
-                    <span>Colored (reserved for RGB)</span>
-                    <span>@Model.ColoredBalance.ToString("N0") sats</span>
-                </div>
-                <div class="d-flex justify-content-between text-muted">
-                    <span>Vanilla UTXOs</span>
-                    <span>@Model.VanillaUtxoCount</span>
-                </div>
+                @if (Model.BalanceUnavailable)
+                {
+                    <div class="alert alert-warning mb-0">
+                        <span class="fa fa-exclamation-triangle"></span>
+                        Balance unavailable — the wallet lookup failed. Your funds are unaffected;
+                        this page cannot read them right now.
+                    </div>
+                }
+                else
+                {
+                    <div class="d-flex justify-content-between mb-2">
+                        <span>Vanilla (confirmed, sendable)</span>
+                        <strong>@Model.VanillaBalance.ToString("N0") sats</strong>
+                    </div>
+                    @if (Model.PendingVanillaBalance > 0)
+                    {
+                        <div class="d-flex justify-content-between mb-2 text-muted">
+                            <span>Awaiting confirmation</span>
+                            <span>@Model.PendingVanillaBalance.ToString("N0") sats</span>
+                        </div>
+                    }
+                    <div class="d-flex justify-content-between mb-2 text-muted">
+                        <span>Colored (reserved for RGB)</span>
+                        <span>@Model.ColoredBalance.ToString("N0") sats</span>
+                    </div>
+                    <div class="d-flex justify-content-between text-muted">
+                        <span>Vanilla UTXOs</span>
+                        <span>@Model.VanillaUtxoCount</span>
+                    </div>
+                }
             </div>
         </div>
 
@@ -49,8 +67,19 @@
                     <div class="mb-3">
                         <label asp-for="Amount" class="form-label"></label>
                         <div class="input-group">
-                            <input asp-for="Amount" type="number" class="form-control" min="546"
-                                   max="@Model.VanillaBalance" />
+                            @* WHY guarded on the dust minimum rather than on "balance known" or on
+                               "balance > 0": max below min makes the field unsatisfiable and the
+                               form silently unsubmittable, and any balance from 1 to 545 sats hits
+                               that too. *@
+                            @if (Model.VanillaBalance >= 546)
+                            {
+                                <input asp-for="Amount" type="number" class="form-control" min="546"
+                                       max="@Model.VanillaBalance" />
+                            }
+                            else
+                            {
+                                <input asp-for="Amount" type="number" class="form-control" min="546" />
+                            }
                             <span class="input-group-text">sats</span>
                         </div>
                         <span asp-validation-for="Amount" class="text-danger"></span>
@@ -80,7 +109,7 @@
                     </div>
 
                     <button type="submit" class="btn btn-primary" id="sendBtn"
-                            onclick="if(!this.form.reportValidity()) return false; if(!confirm('Send ' + document.getElementById('Amount').value + ' sats to ' + document.getElementById('DestinationAddress').value + '?')) return false; this.disabled=true; this.innerHTML='<span class=\'fa fa-spinner fa-spin\'></span> Sending...'; this.form.submit(); return false;">
+                            onclick="if(!this.form.reportValidity()) return false; if(!confirm(document.getElementById('Amount').value === '@Model.VanillaBalance' ? 'Send your entire confirmed balance of ' + document.getElementById('Amount').value + ' sats to ' + document.getElementById('DestinationAddress').value + '?\n\nThe network fee is deducted from this amount, so the destination receives slightly less.' : 'Send ' + document.getElementById('Amount').value + ' sats to ' + document.getElementById('DestinationAddress').value + '?')) return false; this.disabled=true; this.innerHTML='<span class=\'fa fa-spinner fa-spin\'></span> Sending...'; this.form.submit(); return false;">
                         <span class="fa fa-paper-plane"></span> Send BTC
                     </button>
                 </form>

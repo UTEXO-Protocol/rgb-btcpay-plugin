@@ -19,28 +19,102 @@ permissions:
   contents: read
 
 jobs:
+  clean-publish-negative-control:
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_FILE: BTCPayServer.Plugins.RgbUtexo.csproj
+    steps:
+      # A plain checkout, with no native build step anywhere in this job. That is the point: this is
+      # what plugin-builder.btcpayserver.org compiles from, so the gate native this job publishes is
+      # the one the restore fetched from the published RgbVerifyCffi package, byte for byte.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            10.0.x
+
+      - name: Restore clean checkout (locked mode)
+        run: |
+          set -euo pipefail
+          dotnet restore "$PROJECT_FILE" \
+            --locked-mode \
+            -p:Configuration=Release \
+            -p:ContinuousIntegrationBuild=true \
+            -p:StaticWebAssetsEnabled=false
+
+      # The package's natives are the bytes a merchant ends up running, and no blob in this repository
+      # records them any more. This binds the restored copies to hashes recorded in the tree, so a
+      # version bump cannot land without rewriting them in the same diff, where a reviewer sees it.
+      - name: Require the restored gate natives to match their recorded hashes
+        run: bash scripts/verify-gate-native-package-hashes.sh
+
+      - name: Publish clean checkout (the package's native is what lands)
+        run: |
+          set -euo pipefail
+          dotnet publish "$PROJECT_FILE" \
+            -c Release \
+            --no-restore \
+            -p:ContinuousIntegrationBuild=true \
+            -p:StaticWebAssetsEnabled=false \
+            -o clean-publish-out
+
+      # Strict provenance is the inverted control: this job builds no native, so the only way the entry
+      # can be present is that the restore fetched it from the published RgbVerifyCffi package, and
+      # strict requires it to be declared assetType native of that package in the plugin's own
+      # .deps.json AND byte-identical to the package-cache copy. A native substituted in this
+      # repository fails here instead of passing.
+      - name: Require the clean checkout to satisfy the artifact contract under strict provenance
+        run: |
+          python3 scripts/verify_plugin_artifact.py clean-publish-out \
+            --provenance strict \
+            --package-cache "$HOME/.nuget/packages"
+
+      - name: Require the published gate native to load on Debian 12 with all five exports
+        run: bash scripts/verify-artifact-native-loads.sh clean-publish-out
+
+      # Asserting success is not a control. This mutates the published artifact into each deficient
+      # variant in turn and requires the gate to reject it, naming which check fired, so the job goes
+      # red if the gate stops working rather than only if the artifact is bad.
+      - name: Require the gate to reject every deficient gate-native variant
+        run: bash scripts/verify-gate-native-controls.sh clean-publish-out
+
   dotnet-test:
     runs-on: ubuntu-latest
     env:
       TESTS_PROJECT: BTCPayServer.Plugins.RgbUtexo.Tests/BTCPayServer.Plugins.RgbUtexo.Tests.csproj
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
             10.0.x
 
+      # No native build step: the gate native the managed suite loads and this job publishes arrives
+      # from the published RgbVerifyCffi package through the locked restore below, which is the same
+      # route the Plugin Builder takes. The Rust sources are exercised by the rust-test job.
+
+      # StaticWebAssetsEnabled=false is passed as a global property (not just on
+      # the BTCPay ProjectReference) so the submodule graph resolves to a single
+      # project instance. Without it the reference's differing SWA property spawns
+      # a second concurrent build into the same obj/, racing on staticwebassets /
+      # FileListAbsolute files (intermittent MSB3030 / MSB3491).
       - name: Restore (locked mode — packages.lock.json must match)
         run: |
           set -euo pipefail
           dotnet restore "$TESTS_PROJECT" \
             --locked-mode \
-            -p:ContinuousIntegrationBuild=true
+            -p:ContinuousIntegrationBuild=true \
+            -p:StaticWebAssetsEnabled=false
 
       - name: Test
         run: |
@@ -49,7 +123,30 @@ jobs:
             -c Debug \
             --no-restore \
             -p:ContinuousIntegrationBuild=true \
+            -p:StaticWebAssetsEnabled=false \
             --logger "console;verbosity=normal"
+
+      - name: Test artifact verifier fixtures
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+      - name: Publish artifact (Release)
+        run: |
+          set -euo pipefail
+          dotnet publish BTCPayServer.Plugins.RgbUtexo.csproj \
+            -c Release \
+            --no-restore \
+            -p:ContinuousIntegrationBuild=true \
+            -p:StaticWebAssetsEnabled=false \
+            -o ci-publish-out
+
+      - name: Verify complete publish artifact under strict provenance
+        run: |
+          python3 scripts/verify_plugin_artifact.py ci-publish-out \
+            --provenance strict \
+            --package-cache "$HOME/.nuget/packages"
+
+      - name: Assert the published gate native loads on Debian 12
+        run: bash scripts/verify-artifact-native-loads.sh ci-publish-out
 
   rust-test:
     runs-on: ubuntu-latest
@@ -58,7 +155,7 @@ jobs:
         working-directory: native/rgb-verify
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -71,3 +168,24 @@ jobs:
           set -euo pipefail
           rustc --version && cargo --version
           cargo test --release --locked
+
+      # Report-only, and deliberately so. RustSec publishes advisories continuously, so a hard gate here
+      # turns a pull request red for a change its author did not make, and every fix has to travel through
+      # a full RgbVerifyCffi republish before it can land — days of red on unrelated work. continue-on-error
+      # keeps the finding in the run summary without blocking a merge. The managed side is not silent
+      # either: NuGetAudit is on by SDK default (mode all, level low) and already emits NU190x advisory
+      # warnings during the restore steps in the other two jobs, also without failing them.
+      - name: Report RustSec advisories for native/rgb-verify's own Cargo.lock (rgb-lib and the SQLite it statically links are NOT covered - they arrive prebuilt inside the RgbLib NuGet package)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          cargo install cargo-audit --locked
+          cargo audit
+
+      # The manifest records the crate sources and build recipe the published RgbVerifyCffi native is
+      # built from. It cannot show that the package's binary was compiled from them, but it does catch a
+      # source change that was never recorded, and this is the job that owns those sources. release.yml
+      # runs the same check before it can tag.
+      - name: Require the gate-native source manifest to match the tree
+        working-directory: .
+        run: bash scripts/verify-tracked-gate-native-freshness.sh

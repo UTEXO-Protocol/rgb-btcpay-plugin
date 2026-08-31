@@ -1,82 +1,23 @@
 using BTCPayServer.Data;
 using BTCPayServer.Plugins.RgbUtexo.PaymentHandler;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace BTCPayServer.Plugins.RgbUtexo.Tests;
 
 public class RateHandlingTests
 {
-    static readonly JsonSerializer _blobSerializer = BlobSerializer.CreateSerializer().Serializer;
-
+    // The five tests this file used to hold all round-tripped AllowOneToOneRateFallback, the opt-in
+    // that returned rate 1 without inspecting the invoice currency (audit finding E). The flag is
+    // gone with no replacement; what still needs proving is that a store which persisted it keeps
+    // loading, and grants nothing by having done so.
     [Fact]
-    public void AllowFallback_DefaultIsFalse()
+    public void LegacyConfigWithFallbackFlag_DeserializesAndGrantsNothing()
     {
-        var config = new RGBPaymentMethodConfig();
-        Assert.False(config.AllowOneToOneRateFallback);
-    }
-
-    [Fact]
-    public void AllowFallback_True_SurvivesBlobSerializerRoundtrip()
-    {
-        var config = new RGBPaymentMethodConfig
-        {
-            WalletId = "test-wallet",
-            AllowOneToOneRateFallback = true
-        };
-
-        var token = JObject.FromObject(config, _blobSerializer);
-        var deserialized = token.ToObject<RGBPaymentMethodConfig>(_blobSerializer);
-
-        Assert.NotNull(deserialized);
-        Assert.True(deserialized!.AllowOneToOneRateFallback);
-        Assert.Equal("test-wallet", deserialized.WalletId);
-    }
-
-    [Fact]
-    public void AllowFallback_False_OmittedFromJson_DeserializesAsFalse()
-    {
-        var config = new RGBPaymentMethodConfig
-        {
-            WalletId = "test-wallet",
-            AllowOneToOneRateFallback = false
-        };
-
-        var token = JObject.FromObject(config, _blobSerializer);
-        var json = token.ToString();
-
-        Assert.DoesNotContain("allowOneToOneRateFallback", json);
-
-        var deserialized = token.ToObject<RGBPaymentMethodConfig>(_blobSerializer);
-        Assert.NotNull(deserialized);
-        Assert.False(deserialized!.AllowOneToOneRateFallback);
-    }
-
-    [Fact]
-    public void BareToObject_WithBlobSerializer_ReadsAllProperties()
-    {
-        var json = JObject.Parse(@"{
-            ""walletId"": ""w1"",
-            ""allowOneToOneRateFallback"": true,
-            ""utxoCount"": 8
-        }");
-
-        var config = json.ToObject<RGBPaymentMethodConfig>(_blobSerializer);
+        var json = JObject.Parse("""{"walletId":"w1","defaultAssetId":"a1","allowOneToOneRateFallback":true}""");
+        var config = json.ToObject<RGBPaymentMethodConfig>(BlobSerializer.CreateSerializer().Serializer);
 
         Assert.NotNull(config);
         Assert.Equal("w1", config!.WalletId);
-        Assert.True(config.AllowOneToOneRateFallback);
-        Assert.Equal(8, config.UtxoCount);
-    }
-
-    [Fact]
-    public void BareToObject_WithoutSerializer_UsesDefaults()
-    {
-        var json = JObject.Parse(@"{
-            ""allowOneToOneRateFallback"": true
-        }");
-
-        var withSerializer = json.ToObject<RGBPaymentMethodConfig>(_blobSerializer);
-        Assert.True(withSerializer!.AllowOneToOneRateFallback);
+        Assert.Null(config.GetType().GetProperty("AllowOneToOneRateFallback"));
     }
 }

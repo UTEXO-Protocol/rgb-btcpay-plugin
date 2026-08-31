@@ -4,7 +4,7 @@ use amplify::ByteArray;
 use rgbinvoice::{Beneficiary, InvoiceState, RgbInvoice};
 use serde::Serialize;
 
-use schemata::NIA_SCHEMA_ID;
+use schemata::{CFA_SCHEMA_ID, NIA_SCHEMA_ID};
 
 #[derive(Serialize)]
 struct DecodedInvoice {
@@ -29,8 +29,8 @@ pub(crate) fn decode_invoice(invoice_str: String) -> Result<String, String> {
         .ok_or_else(|| "invoice omits the contract id".to_string())?;
 
     if let Some(schema) = invoice.schema {
-        if schema != NIA_SCHEMA_ID {
-            return Err("invoice schema hint is not the NIA schema".to_string());
+        if schema != NIA_SCHEMA_ID && schema != CFA_SCHEMA_ID {
+            return Err("invoice schema hint is not a supported NIA/CFA schema".to_string());
         }
     }
 
@@ -183,7 +183,18 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_nia_schema() {
+    fn accepts_cfa_schema() {
+        let invoice = RgbInvoiceBuilder::with(contract_id(), blinded(ChainNet::BitcoinRegtest))
+            .set_schema(CFA_SCHEMA_ID)
+            .set_amount_raw(100u64)
+            .finish();
+
+        let value = decode_value(&invoice);
+        assert_eq!(value["amount"], 100u64);
+    }
+
+    #[test]
+    fn rejects_unsupported_schema() {
         let schema = SchemaId::from_str(NON_NIA_SCHEMA).unwrap();
         let invoice = RgbInvoiceBuilder::with(contract_id(), blinded(ChainNet::BitcoinRegtest))
             .set_schema(schema)
@@ -191,7 +202,7 @@ mod tests {
             .finish();
 
         let err = decode_invoice(invoice.to_string()).unwrap_err();
-        assert!(err.contains("NIA"), "unexpected error: {err}");
+        assert!(err.contains("NIA/CFA"), "unexpected error: {err}");
     }
 
     #[test]

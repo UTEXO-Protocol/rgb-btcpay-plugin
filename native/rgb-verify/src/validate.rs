@@ -1,22 +1,31 @@
+use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use amplify::confinement::Confined;
 use amplify::{ByteArray, Wrapper};
 use serde::Serialize;
 
-use rgbcore::bitcoin::Transaction;
+use rgbcore::bitcoin::{OutPoint, Transaction};
 use rgbcore::dbc::{Method, Proof};
-use rgbcore::validation::ValidationConfig;
 use rgbcore::seals::txout::TxPtr;
-use rgbcore::{Assign, ChainNet, ContractId, Transition, Txid};
+use rgbcore::validation::ValidationConfig;
+use rgbcore::{Assign, ChainNet, ContractId, OpId, Opout, Transition, Txid};
 use rgbstd::containers::{ConsignmentExt, FileContent, Transfer, WitnessBundle};
 use rgbstd::contract::IssuerWrapper;
 use rgbstd::indexers::AnyResolver;
+use rgbstd::persistence::fs::FsBinStore;
+use rgbstd::persistence::{MemIndex, MemStash, MemState, Stock};
 
-use schemata::{NonInflatableAsset, NIA_SCHEMA_ID, TS_TRANSFER};
+use strict_types::TypeSystem;
+
+use schemata::{
+    CollectibleFungibleAsset, NonInflatableAsset, CFA_SCHEMA_ID, NIA_SCHEMA_ID, TS_TRANSFER,
+};
+
+use crate::inputs::{scan_inputs, ObservedInput};
 
 #[derive(Serialize)]
-struct Leg {
+pub(crate) struct Leg {
     #[serde(rename = "assignmentType")]
     assignment_type: u16,
     #[serde(rename = "sealKind")]
@@ -26,7 +35,21 @@ struct Leg {
     #[serde(rename = "witnessVout")]
     witness_vout: Option<u32>,
     outpoint: Option<String>,
+    #[serde(rename = "derivationPath")]
+    derivation_path: Option<String>,
     amount: u64,
+}
+
+impl Leg {
+    pub(crate) fn concrete_outpoint(&self) -> Option<&str> {
+        (self.seal_kind == "revealedConcreteOutpoint")
+            .then(|| self.outpoint.as_deref())
+            .flatten()
+    }
+
+    pub(crate) fn set_derivation_path(&mut self, path: String) {
+        self.derivation_path = Some(path);
+    }
 }
 
 #[derive(Serialize)]
@@ -39,6 +62,9 @@ struct ValidatedTransfer {
     witness_txid: String,
     prevouts: Vec<String>,
     legs: Vec<Leg>,
+    #[serde(rename = "inputsAccounted")]
+    inputs_accounted: bool,
+    inputs: Vec<ObservedInput>,
 }
 
 pub(crate) fn validate(
@@ -46,11 +72,12 @@ pub(crate) fn validate(
     unsigned_txid: String,
     indexer_url: String,
     network: String,
+    stock_dir: String,
 ) -> Result<String, String> {
     let consignment = Transfer::load_file(&consignment_path)
         .map_err(|e| format!("failed to load consignment: {e}"))?;
 
-    check_schema(&consignment)?;
+    let trusted_typesystem = trusted_types_for(consignment.schema_id())?;
 
     let chain_net =
         ChainNet::from_str(&network).map_err(|_| format!("unsupported chain net: {network}"))?;
@@ -60,7 +87,7 @@ pub(crate) fn validate(
     resolver.add_consignment_txes(&terminal_only_consignment(&consignment, txid)?);
     let config = ValidationConfig {
         chain_net,
-        trusted_typesystem: NonInflatableAsset::types(),
+        trusted_typesystem,
         ..Default::default()
     };
     consignment
@@ -69,13 +96,24 @@ pub(crate) fn validate(
         .map_err(|e| format!("consignment validation failed: {e}"))?;
 
     let contract_id = consignment.contract_id();
-    let bundle = select_anchored_bundle(&consignment, txid)?;
+    let (bundle, transition) = select_transfer_transition(&consignment, txid)?;
     let witness_tx = bundle
         .pub_witness
         .tx()
         .ok_or_else(|| "anchored bundle does not embed its witness transaction".to_string())?;
-    let transition = enforce_transition_rules(bundle)?;
     verify_anchor(bundle, contract_id, witness_tx)?;
+
+    let store = FsBinStore::new(std::path::PathBuf::from(&stock_dir))
+        .map_err(|e| format!("failed to open stock dir: {e}"))?;
+    let stock = Stock::<MemStash, MemState, MemIndex>::load(store, false)
+        .map_err(|e| format!("failed to load stock: {e}"))?;
+    let scan = scan_inputs(
+        &stock,
+        contract_id,
+        transition,
+        &input_map_of(bundle),
+        &witness_prevouts(witness_tx),
+    )?;
 
     let transfer = ValidatedTransfer {
         contract_id: contract_id.to_string(),
@@ -83,14 +121,19 @@ pub(crate) fn validate(
         witness_txid: witness_tx.compute_txid().to_string(),
         prevouts: extract_prevouts(witness_tx),
         legs: extract_legs(transition)?,
+        inputs_accounted: scan.inputs_accounted,
+        inputs: scan.inputs,
     };
 
     serde_json::to_string(&transfer).map_err(|e| e.to_string())
 }
 
-fn build_resolver(indexer_url: &str) -> Result<AnyResolver, String> {
+pub(crate) fn build_resolver(indexer_url: &str) -> Result<AnyResolver, String> {
     if indexer_url.starts_with("http://") || indexer_url.starts_with("https://") {
-        let authority = indexer_url.split_once("://").map(|(_, rest)| rest).unwrap_or("");
+        let authority = indexer_url
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or("");
         if authority.is_empty() || authority.starts_with('/') {
             return Err(format!("malformed esplora indexer url: {indexer_url}"));
         }
@@ -102,7 +145,10 @@ fn build_resolver(indexer_url: &str) -> Result<AnyResolver, String> {
         .map_err(|e| format!("failed to build electrum resolver: {e}"))
 }
 
-fn terminal_only_consignment(consignment: &Transfer, txid: Txid) -> Result<Transfer, String> {
+pub(crate) fn terminal_only_consignment(
+    consignment: &Transfer,
+    txid: Txid,
+) -> Result<Transfer, String> {
     let terminal = select_anchored_bundle(consignment, txid)?.clone();
     let mut trimmed = consignment.clone();
     trimmed.bundles = Confined::try_from_iter([terminal])
@@ -110,17 +156,22 @@ fn terminal_only_consignment(consignment: &Transfer, txid: Txid) -> Result<Trans
     Ok(trimmed)
 }
 
-fn check_schema(consignment: &Transfer) -> Result<(), String> {
-    if consignment.schema_id() != NIA_SCHEMA_ID {
-        return Err(format!(
-            "consignment schema {} is not the NIA schema",
-            consignment.schema_id()
-        ));
+pub(crate) fn trusted_types_for(schema_id: rgbcore::SchemaId) -> Result<TypeSystem, String> {
+    if schema_id == NIA_SCHEMA_ID {
+        Ok(NonInflatableAsset::types())
+    } else if schema_id == CFA_SCHEMA_ID {
+        Ok(CollectibleFungibleAsset::types())
+    } else {
+        Err(format!(
+            "schema {schema_id} is not one of the supported NIA/CFA schemas"
+        ))
     }
-    Ok(())
 }
 
-fn select_anchored_bundle(consignment: &Transfer, txid: Txid) -> Result<&WitnessBundle, String> {
+pub(crate) fn select_anchored_bundle(
+    consignment: &Transfer,
+    txid: Txid,
+) -> Result<&WitnessBundle, String> {
     let mut anchored = consignment
         .bundles
         .iter()
@@ -134,7 +185,7 @@ fn select_anchored_bundle(consignment: &Transfer, txid: Txid) -> Result<&Witness
     Ok(bundle)
 }
 
-fn enforce_transition_rules(bundle: &WitnessBundle) -> Result<&Transition, String> {
+pub(crate) fn enforce_transition_rules(bundle: &WitnessBundle) -> Result<&Transition, String> {
     let transition_bundle = &bundle.bundle;
     if !transition_bundle
         .input_map_opids()
@@ -148,7 +199,12 @@ fn enforce_transition_rules(bundle: &WitnessBundle) -> Result<&Transition, Strin
             transition_bundle.known_transitions.len()
         ));
     }
-    let transition = &transition_bundle.known_transitions.iter().next().unwrap().transition;
+    let transition = &transition_bundle
+        .known_transitions
+        .iter()
+        .next()
+        .unwrap()
+        .transition;
     if transition.transition_type != TS_TRANSFER {
         return Err(format!(
             "transition type {} is not a transfer",
@@ -158,7 +214,33 @@ fn enforce_transition_rules(bundle: &WitnessBundle) -> Result<&Transition, Strin
     Ok(transition)
 }
 
-fn verify_anchor(
+fn select_transfer_transition(
+    consignment: &Transfer,
+    txid: Txid,
+) -> Result<(&WitnessBundle, &Transition), String> {
+    let bundle = select_anchored_bundle(consignment, txid)?;
+    let transition = enforce_transition_rules(bundle)?;
+    Ok((bundle, transition))
+}
+
+pub(crate) fn input_map_of(bundle: &WitnessBundle) -> BTreeMap<Opout, OpId> {
+    bundle
+        .bundle
+        .input_map
+        .iter()
+        .map(|(opout, opid)| (*opout, *opid))
+        .collect()
+}
+
+pub(crate) fn witness_prevouts(witness_tx: &Transaction) -> Vec<OutPoint> {
+    witness_tx
+        .input
+        .iter()
+        .map(|input| input.previous_output)
+        .collect()
+}
+
+pub(crate) fn verify_anchor(
     bundle: &WitnessBundle,
     contract_id: ContractId,
     witness_tx: &Transaction,
@@ -173,7 +255,7 @@ fn verify_anchor(
     Ok(())
 }
 
-fn extract_prevouts(witness_tx: &Transaction) -> Vec<String> {
+pub(crate) fn extract_prevouts(witness_tx: &Transaction) -> Vec<String> {
     witness_tx
         .input
         .iter()
@@ -186,7 +268,7 @@ fn extract_prevouts(witness_tx: &Transaction) -> Vec<String> {
         .collect()
 }
 
-fn extract_legs(transition: &Transition) -> Result<Vec<Leg>, String> {
+pub(crate) fn extract_legs(transition: &Transition) -> Result<Vec<Leg>, String> {
     let mut legs = Vec::new();
     for (assignment_type, typed) in transition.assignments.iter() {
         if !typed.is_fungible() {
@@ -204,6 +286,7 @@ fn extract_legs(transition: &Transition) -> Result<Vec<Leg>, String> {
                         seal_bytes: None,
                         witness_vout: Some(seal.vout.into_u32()),
                         outpoint: None,
+                        derivation_path: None,
                         amount: state.as_u64(),
                     },
                     TxPtr::Txid(txid) => Leg {
@@ -212,6 +295,7 @@ fn extract_legs(transition: &Transition) -> Result<Vec<Leg>, String> {
                         seal_bytes: None,
                         witness_vout: None,
                         outpoint: Some(format!("{txid}:{}", seal.vout.into_u32())),
+                        derivation_path: None,
                         amount: state.as_u64(),
                     },
                 },
@@ -221,6 +305,7 @@ fn extract_legs(transition: &Transition) -> Result<Vec<Leg>, String> {
                     seal_bytes: Some(hex::encode(seal.to_byte_array())),
                     witness_vout: None,
                     outpoint: None,
+                    derivation_path: None,
                     amount: state.as_u64(),
                 },
             };
@@ -241,7 +326,10 @@ mod tests {
     use schemata::UniqueDigitalAsset;
 
     fn fixture() -> Transfer {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/consignment_out");
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/consignment_out"
+        );
         Transfer::load_file(path).unwrap()
     }
 
@@ -261,11 +349,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_nia_schema() {
+    fn rejects_unsupported_schema() {
         let mut consignment = fixture();
         consignment.schema = UniqueDigitalAsset::schema();
-        let err = check_schema(&consignment).unwrap_err();
-        assert!(err.contains("is not the NIA schema"), "{err}");
+        let err = trusted_types_for(consignment.schema_id()).unwrap_err();
+        assert!(err.contains("supported NIA/CFA schemas"), "{err}");
     }
 
     #[test]
@@ -285,16 +373,29 @@ mod tests {
         let mut bundle = terminal_bundle(&consignment);
         let bogus_opid = OpId::from([0x77u8; 32]);
         let bogus_opout = Opout::new(bogus_opid, AssignmentType::with(4000), 0);
-        bundle.bundle.input_map.insert(bogus_opout, bogus_opid).unwrap();
+        bundle
+            .bundle
+            .input_map
+            .insert(bogus_opout, bogus_opid)
+            .unwrap();
         let err = enforce_transition_rules(&bundle).unwrap_err();
-        assert!(err.contains("input map references transitions absent"), "{err}");
+        assert!(
+            err.contains("input map references transitions absent"),
+            "{err}"
+        );
     }
 
     #[test]
     fn rejects_multiple_known_transitions() {
         let consignment = fixture();
         let mut bundle = terminal_bundle(&consignment);
-        let extra = bundle.bundle.known_transitions.iter().next().unwrap().clone();
+        let extra = bundle
+            .bundle
+            .known_transitions
+            .iter()
+            .next()
+            .unwrap()
+            .clone();
         let mut transitions = bundle.bundle.known_transitions.to_unconfined();
         transitions.push(extra);
         bundle.bundle.known_transitions = Confined::from_checked(transitions);
@@ -306,7 +407,13 @@ mod tests {
     fn rejects_non_transfer_transition_type() {
         let consignment = fixture();
         let mut bundle = terminal_bundle(&consignment);
-        let mut known = bundle.bundle.known_transitions.iter().next().unwrap().clone();
+        let mut known = bundle
+            .bundle
+            .known_transitions
+            .iter()
+            .next()
+            .unwrap()
+            .clone();
         known.transition.transition_type = TransitionType::with(9999);
         bundle.bundle.known_transitions = Confined::from_checked(vec![known]);
         let err = enforce_transition_rules(&bundle).unwrap_err();
@@ -343,7 +450,7 @@ mod tests {
 
     #[test]
     fn fixture_uses_nia_schema() {
-        check_schema(&fixture()).unwrap();
+        trusted_types_for(fixture().schema_id()).unwrap();
     }
 
     #[test]
@@ -361,16 +468,18 @@ mod tests {
         let txid = terminal_txid(&consignment);
         let trimmed = terminal_only_consignment(&consignment, txid).unwrap();
         assert_eq!(trimmed.bundles.len(), 1);
-        assert_eq!(trimmed.bundles.iter().next().unwrap().pub_witness.txid(), txid);
+        assert_eq!(
+            trimmed.bundles.iter().next().unwrap().pub_witness.txid(),
+            txid
+        );
     }
 
     #[test]
     fn rejects_txid_absent_from_consignment() {
         let consignment = fixture();
-        let txid = Txid::from_str(
-            "0000000000000000000000000000000000000000000000000000000000000000",
-        )
-        .unwrap();
+        let txid =
+            Txid::from_str("0000000000000000000000000000000000000000000000000000000000000000")
+                .unwrap();
         assert!(select_anchored_bundle(&consignment, txid).is_err());
     }
 
@@ -443,9 +552,11 @@ mod tests {
     fn utexo_esplora_indexer_is_reachable() {
         let url = "https://esplora-api.utexo.com";
         assert!(build_resolver(url).is_ok());
-        let client = rgbstd::indexers::esplora_blocking::esplora_client::Builder::new(url)
-            .build_blocking();
-        let height = client.get_height().expect("live utexo esplora query failed");
+        let client =
+            rgbstd::indexers::esplora_blocking::esplora_client::Builder::new(url).build_blocking();
+        let height = client
+            .get_height()
+            .expect("live utexo esplora query failed");
         assert!(height > 0);
     }
 }

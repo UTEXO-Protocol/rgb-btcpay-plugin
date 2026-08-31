@@ -20,10 +20,10 @@ public class InvoiceProcessingTests
     }
 
     [Fact]
-    public void SingleWaitingTransfer_TransitionsToWaitingConfirmations()
+    public void SingleWaitingConfirmationsTransfer_TransitionsToWaitingConfirmations()
     {
         var inv = MakeInvoice();
-        var result = RGBInvoiceListener.EvaluateInvoiceState(inv, [T(1, 1, 50)]);
+        var result = RGBInvoiceListener.EvaluateInvoiceState(inv, [T(1, 2, 50)]);
         Assert.Equal(RGBInvoiceStatus.WaitingConfirmations, result.NewStatus);
         Assert.Equal(50, result.ReceivedAmount);
         Assert.Single(result.PaymentsToRecord);
@@ -104,7 +104,7 @@ public class InvoiceProcessingTests
     public void WaitingTransfer_WithExistingSettledInvoice_NoChange()
     {
         var inv = MakeInvoice(amount: 100, status: RGBInvoiceStatus.WaitingConfirmations);
-        var result = RGBInvoiceListener.EvaluateInvoiceState(inv, [T(1, 1, 50)]);
+        var result = RGBInvoiceListener.EvaluateInvoiceState(inv, [T(1, 2, 50)]);
         Assert.Null(result.NewStatus);
     }
 
@@ -112,9 +112,18 @@ public class InvoiceProcessingTests
     public void ZeroAmountWaitingTransfer_TransitionsButNoPayment()
     {
         var inv = MakeInvoice();
-        var result = RGBInvoiceListener.EvaluateInvoiceState(inv, [T(1, 1, 0)]);
+        var result = RGBInvoiceListener.EvaluateInvoiceState(inv, [T(1, 2, 0)]);
         Assert.Equal(RGBInvoiceStatus.WaitingConfirmations, result.NewStatus);
         Assert.Equal(0, result.ReceivedAmount);
+        Assert.Empty(result.PaymentsToRecord);
+    }
+
+    [Fact]
+    public void WaitingCounterpartyRowDoesNotAdvanceAnUnfundedInvoice()
+    {
+        var result = RGBInvoiceListener.EvaluateInvoiceState(MakeInvoice(), [T(1, 1, 0)]);
+
+        Assert.Null(result.NewStatus);
         Assert.Empty(result.PaymentsToRecord);
     }
 

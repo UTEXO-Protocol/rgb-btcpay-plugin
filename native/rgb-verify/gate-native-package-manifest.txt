@@ -1,0 +1,3 @@
+924f400276a333ed05c038b20603886fa800419f5349dd1078a42235365d4727  rgbverifycffi/0.11.1-rc.10-native.2/runtimes/linux-arm64/native/librgbverifycffi.so
+5559a9dd5029b9031a0e7f212f614c23f7ca5c7453510f7cf5e24b912db24fe1  rgbverifycffi/0.11.1-rc.10-native.2/runtimes/linux-x64/native/librgbverifycffi.so
+280f18708f80f2173214f74af3e9626f27f5cace50c0c000f228b55db390cd55  rgbverifycffi/0.11.1-rc.10-native.2/runtimes/osx-arm64/native/librgbverifycffi.dylib

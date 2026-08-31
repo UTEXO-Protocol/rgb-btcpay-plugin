@@ -25,6 +25,15 @@ public class RGBCheckoutModelExtension : ICheckoutModelExtension
     public string Image => "rgb-icon.svg";
     public string Badge => "RGB";
     
+    internal static string FormatAssetUnitsExactly(long amountInAssetUnits, int assetPrecision)
+    {
+        var divisor = 1m;
+        for (var i = 0; i < assetPrecision; i++)
+            divisor *= 10m;
+        return (amountInAssetUnits / divisor).ToString(
+            $"F{assetPrecision}", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     public void ModifyCheckoutModel(CheckoutModelContext context)
     {
         if (context.Handler is not RGBPaymentMethodHandler handler)
@@ -47,8 +56,8 @@ public class RGBCheckoutModelExtension : ICheckoutModelExtension
                 
                 if (details.AmountInAssetUnits > 0 && details.AssetPrecision >= 0)
                 {
-                    var divisor = Math.Pow(10, details.AssetPrecision);
-                    context.Model.Due = (details.AmountInAssetUnits / divisor).ToString($"F{details.AssetPrecision}");
+                    context.Model.Due = FormatAssetUnitsExactly(
+                        details.AmountInAssetUnits, details.AssetPrecision);
                 }
             }
             catch (Exception ex)

@@ -3,7 +3,7 @@ namespace BTCPayServer.Plugins.RgbUtexo.Services;
 public interface IRgbLibService : IDisposable
 {
     Task<RgbLibWalletHandle> GetOrCreateWalletAsync(string walletId, CancellationToken ct = default);
-    void UnloadWallet(string walletId);
+    bool UnloadWallet(string walletId);
     string GetWalletDataDir(string walletId, string walletNetwork);
     
     Task<string> GetAddressAsync(string walletId, CancellationToken ct = default);
@@ -18,7 +18,12 @@ public interface IRgbLibService : IDisposable
     Task<string> CreateUtxosEndAsync(string walletId, string signedPsbt, CancellationToken ct = default);
     
     Task<List<RgbTransfer>> ListTransfersAsync(string walletId, string? assetId = null, CancellationToken ct = default);
+    Task<List<RgbMatchedTransfer>> ListIncomingTransfersForRecipientsAsync(
+        string walletId, IReadOnlyCollection<string> recipientIds, string? assetId = null,
+        CancellationToken ct = default);
     Task RefreshAsync(string walletId, CancellationToken ct = default);
+    Task<string> SnapshotStockAsync(string walletId, CancellationToken ct = default);
+    Task<RgbVerificationSnapshot> SnapshotVerificationStateAsync(string walletId, CancellationToken ct = default);
 
     Task<RgbAsset> IssueAssetNiaAsync(string walletId, string ticker, string name, List<long> amounts, int precision, CancellationToken ct = default);
 
@@ -29,7 +34,6 @@ public interface IRgbLibService : IDisposable
     RgbInvoiceData DecodeInvoice(string invoiceString);
 
     Task<string> BackupWalletAsync(string walletId, string password, CancellationToken ct = default);
-    void RestoreBackup(string backupPath, string password, string targetDir);
 
     RgbKeys GenerateKeys(string network);
     RgbKeys RestoreKeysFromMnemonic(string mnemonic, string network);

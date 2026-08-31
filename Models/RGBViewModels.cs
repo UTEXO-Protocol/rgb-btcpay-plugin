@@ -1,10 +1,16 @@
 using System.ComponentModel.DataAnnotations;
+using BTCPayServer.Plugins.RgbUtexo.Data.Entities;
+using BTCPayServer.Plugins.RgbUtexo.Services;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.AspNetCore.Mvc.ModelBinding.Validation;
 
 namespace BTCPayServer.Plugins.RgbUtexo.Models;
 
 public abstract class StoreViewModel
 {
+    [BindNever]
+    [ValidateNever]
     public string StoreId { get; set; } = "";
 }
 
@@ -25,7 +31,7 @@ public class RGBSetupViewModel : StoreViewModel
     public Dictionary<string, NetworkSettingsDto> AllNetworkSettings { get; set; } = new();
 
     [Display(Name = "Max Allocations per UTXO")]
-    [Range(1, 50)]
+    [Range(RgbConfigBounds.AllocationsPerUtxoMin, RgbConfigBounds.AllocationsPerUtxoMax)]
     public int MaxAllocationsPerUtxo { get; set; } = 10;
 
     public bool IsRestore { get; set; }
@@ -72,16 +78,36 @@ public class RGBAssetsViewModel : StoreViewModel
 
 public class RGBAssetViewModel
 {
+    public const int ContractIdHeadCharsShown = 12;
+    public const int ContractIdTailCharsShown = 8;
+    public const string ContractIdElidedMiddleMarker = "…";
+    const int LongestContractIdShownWhole =
+        ContractIdHeadCharsShown + ContractIdTailCharsShown + 1;
+
     public string AssetId { get; set; } = "";
     public string Ticker { get; set; } = "";
     public string Name { get; set; } = "";
     public int Precision { get; set; }
-    public long IssuedSupply { get; set; }
-    public long Balance { get; set; }
-    public long FutureBalance { get; set; }
-    public long SpendableBalance { get; set; }
-    public long PendingOutgoing => Balance > FutureBalance ? Balance - FutureBalance : 0;
-    public long PendingIncoming => FutureBalance > Balance ? FutureBalance - Balance : 0;
+    public ulong IssuedSupply { get; set; }
+    public ulong Balance { get; set; }
+    public ulong FutureBalance { get; set; }
+    public ulong SpendableBalance { get; set; }
+    public string PricingCode { get; set; } = "";
+    public ulong PendingOutgoing => Balance > FutureBalance ? Balance - FutureBalance : 0;
+    public ulong PendingIncoming => FutureBalance > Balance ? FutureBalance - Balance : 0;
+
+    public static string AbbreviateContractIdKeepingHeadAndTail(string? assetId)
+    {
+        var contractId = assetId ?? "";
+        return contractId.Length <= LongestContractIdShownWhole
+            ? contractId
+            : contractId[..ContractIdHeadCharsShown]
+              + ContractIdElidedMiddleMarker
+              + contractId[^ContractIdTailCharsShown..];
+    }
+
+    public string AssetIdAbbreviatedKeepingHeadAndTail =>
+        AbbreviateContractIdKeepingHeadAndTail(AssetId);
 }
 
 public class RGBIssueAssetViewModel : StoreViewModel
@@ -124,14 +150,16 @@ public class RGBUtxoViewModel
 public class RGBAllocationViewModel
 {
     public string AssetId { get; set; } = "";
-    public long Amount { get; set; }
+    public ulong Amount { get; set; }
     public bool Settled { get; set; }
+
+    public string AssetIdAbbreviatedKeepingHeadAndTail =>
+        RGBAssetViewModel.AbbreviateContractIdKeepingHeadAndTail(AssetId);
 }
 
 public class RGBTransfersViewModel : StoreViewModel
 {
     public string? SelectedAssetId { get; set; }
-    public List<RGBAssetViewModel> Assets { get; set; } = [];
     public List<RGBTransferViewModel> Transfers { get; set; } = [];
 }
 
@@ -179,8 +207,13 @@ public class RGBSendBtcViewModel : StoreViewModel
     public float FeeRate { get; set; } = 2.0f;
 
     public long VanillaBalance { get; set; }
+    public long PendingVanillaBalance { get; set; }
     public long ColoredBalance { get; set; }
     public int VanillaUtxoCount { get; set; }
+
+    // WHY: the balance fields default to 0, which a merchant reads as "no funds" rather than
+    // "lookup failed". The view needs to tell those two apart.
+    public bool BalanceUnavailable { get; set; }
 }
 
 public class RGBSendAssetViewModel : StoreViewModel
@@ -190,6 +223,7 @@ public class RGBSendAssetViewModel : StoreViewModel
     public string AssetId { get; set; } = "";
 
     [Required]
+    [StringLength(TransportEndpointValidator.MaxRgbInvoiceLength)]
     [Display(Name = "RGB Invoice")]
     public string RgbInvoice { get; set; } = "";
 
@@ -220,24 +254,56 @@ public class RGBSettingsViewModel : StoreViewModel
     public string ElectrumUrl { get; set; } = "";
     public bool IsConnected { get; set; }
     public string? ConnectionError { get; set; }
+    [BindNever]
+    [ValidateNever]
+    public BtcBalance? DeleteBalance { get; set; }
 
     [Display(Name = "UTXO Count")]
-    [Range(1, 20)]
+    [Range(RgbConfigBounds.UtxoCountMin, RgbConfigBounds.UtxoCountMax)]
     public int UtxoCount { get; set; } = 4;
 
     [Display(Name = "UTXO Size (sats)")]
-    [Range(546, 100000)]
+    [Range(RgbConfigBounds.UtxoSizeMin, RgbConfigBounds.UtxoSizeMax)]
     public int UtxoSize { get; set; } = 1000;
 
     [Display(Name = "Max Allocations per UTXO")]
-    [Range(1, 50)]
     public int MaxAllocationsPerUtxo { get; set; } = 10;
 
     [Display(Name = "Min Confirmations")]
-    [Range(1, 100)]
+    [Range(RgbConfigBounds.MinConfirmationsMin, RgbConfigBounds.MinConfirmationsMax)]
     public int MinConfirmations { get; set; } = 1;
 
-    public bool AllowOneToOneRateFallback { get; set; }
+    public string? PricingCode { get; set; }
+    public string? SuggestedRateRule { get; set; }
+    public string? SuggestedPegRule { get; set; }
+    public string? QuoteCurrency { get; set; }
+    public bool RateRuleMissing { get; set; }
+    public bool UsesDefaultRules { get; set; }
+    public bool RateUnresolved { get; set; }
+
+    public bool AutomaticReplenishmentGranted { get; set; }
+    public RgbAutoReplenishmentDecision AutomaticReplenishmentDecision { get; set; }
+    public DateTimeOffset? AutomaticReplenishmentDecidedAt { get; set; }
+    public string? AutomaticReplenishmentDecidedBy { get; set; }
+    public RgbReplenishmentNoticeCause ReplenishmentNoticeCause { get; set; }
+    public string ReplenishmentNoticeMessage { get; set; } = "";
+    public bool ReplenishmentNoticeInvitesGrant { get; set; }
+    public int MaxAutoColorableUtxos { get; set; }
+    public int? PersistedUtxoCount { get; set; }
+    public int? PersistedUtxoSize { get; set; }
+    public long WorstCaseReplenishFeeBaseSats { get; set; }
+    public long WorstCaseReplenishFeePerVanillaUtxoSats { get; set; }
+
+    public long? MaxAutoColorablePrincipalSats =>
+        PersistedUtxoSize.HasValue ? (long)MaxAutoColorableUtxos * PersistedUtxoSize.Value : null;
+
+    public long MaxAutoColorablePrincipalCeilingSats =>
+        (long)MaxAutoColorableUtxos * RgbConfigBounds.UtxoSizeMax;
+
+    public RgbVanillaReservationState VanillaReservationState { get; set; } = RgbVanillaReservationState.Clean;
+    public int VanillaReservationCount { get; set; }
+    public int VanillaReservationStillUnspentCount { get; set; }
+    public bool StoreArchived { get; set; }
 }
 
 public class RGBBlindReceiveViewModel : StoreViewModel

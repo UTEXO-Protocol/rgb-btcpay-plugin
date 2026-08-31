@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -13,6 +14,9 @@ namespace BTCPayServer.Plugins.RgbUtexo.Services;
 
 public class RgbLibService : IRgbLibService
 {
+    internal const int MaxTransferListRows = 1_000;
+    static readonly ConcurrentDictionary<Lazy<RgbLibWalletHandle>, byte>
+        PendingConstructionDisposals = new(ReferenceEqualityComparer.Instance);
     readonly RGBConfiguration _config;
     readonly RGBPluginDbContextFactory _db;
     readonly ILogger<RgbLibService> _log;
@@ -24,16 +28,25 @@ public class RgbLibService : IRgbLibService
     readonly FieldInfo _onlineJsonField;
     readonly FieldInfo _resultField;
     readonly FieldInfo _innerField;
-    
+    readonly Action<IntPtr> _stringFree;
+    readonly Func<IntPtr, string?> _marshal;
+
+    readonly MethodInfo _getAddressMethod;
+    readonly MethodInfo _issueAssetNiaMethod;
+    readonly MethodInfo _getBtcBalanceMethod;
+    readonly MethodInfo _listAssetsMethod;
     readonly MethodInfo _blindReceiveMethod;
     readonly MethodInfo _listUnspentsMethod;
     readonly MethodInfo _createUtxosBeginMethod;
     readonly MethodInfo _createUtxosEndMethod;
     readonly MethodInfo _refreshMethod;
     readonly MethodInfo _listTransactionsMethod;
-    readonly MethodInfo _restoreBackupMethod;
     readonly MethodInfo _sendBeginMethod;
     readonly MethodInfo _sendEndMethod;
+    readonly MethodInfo _goOnlineMethod;
+    readonly MethodInfo _generateKeysMethod;
+    readonly MethodInfo _restoreKeysMethod;
+    readonly MethodInfo _backupMethod;
 
     bool _disposed;
 
@@ -41,29 +54,55 @@ public class RgbLibService : IRgbLibService
         RGBConfiguration config,
         RGBPluginDbContextFactory db,
         ILogger<RgbLibService> log)
+        : this(config, db, log,
+            typeof(RgbLibWallet).Assembly.GetType("RgbLib.CResultString")!,
+            rgblib_string_free,
+            Marshal.PtrToStringUTF8)
+    {
+    }
+
+    internal RgbLibService(
+        RGBConfiguration config,
+        RGBPluginDbContextFactory db,
+        ILogger<RgbLibService> log,
+        Type cResultStringType,
+        Action<IntPtr> stringFree,
+        Func<IntPtr, string?> marshal)
     {
         _config = config;
         _db = db;
         _log = log;
-        
+        _stringFree = stringFree;
+        _marshal = marshal;
+
         var assembly = typeof(RgbLibWallet).Assembly;
         _nativeMethodsType = assembly.GetType("RgbLib.NativeMethods")!;
-        _cResultStringType = assembly.GetType("RgbLib.CResultString")!;
-        
+        _cResultStringType = cResultStringType;
+
         _walletField = typeof(RgbLibWallet).GetField("_wallet", BindingFlags.NonPublic | BindingFlags.Instance)!;
         _onlineJsonField = typeof(RgbLibWallet).GetField("_onlineJson", BindingFlags.NonPublic | BindingFlags.Instance)!;
         _resultField = _cResultStringType.GetField("result")!;
         _innerField = _cResultStringType.GetField("inner")!;
         
+        // RgbLib's own typed wrappers marshal a CResultString and never free it — the package binds no
+        // string-free at all — so every typed call leaked its payload. These three are the reachable
+        // ones, and get_btc_balance runs once per wallet per listener sweep.
+        _getAddressMethod = _nativeMethodsType.GetMethod("rgblib_get_address")!;
+        _issueAssetNiaMethod = _nativeMethodsType.GetMethod("rgblib_issue_asset_nia")!;
+        _getBtcBalanceMethod = _nativeMethodsType.GetMethod("rgblib_get_btc_balance")!;
+        _listAssetsMethod = _nativeMethodsType.GetMethod("rgblib_list_assets")!;
         _blindReceiveMethod = _nativeMethodsType.GetMethod("rgblib_blind_receive")!;
         _listUnspentsMethod = _nativeMethodsType.GetMethod("rgblib_list_unspents")!;
         _createUtxosBeginMethod = _nativeMethodsType.GetMethod("rgblib_create_utxos_begin")!;
         _createUtxosEndMethod = _nativeMethodsType.GetMethod("rgblib_create_utxos_end")!;
         _refreshMethod = _nativeMethodsType.GetMethod("rgblib_refresh")!;
         _listTransactionsMethod = _nativeMethodsType.GetMethod("rgblib_list_transactions")!;
-        _restoreBackupMethod = _nativeMethodsType.GetMethod("rgblib_restore_backup")!;
         _sendBeginMethod = _nativeMethodsType.GetMethod("rgblib_send_begin")!;
         _sendEndMethod = _nativeMethodsType.GetMethod("rgblib_send_end")!;
+        _goOnlineMethod = _nativeMethodsType.GetMethod("rgblib_go_online")!;
+        _generateKeysMethod = _nativeMethodsType.GetMethod("rgblib_generate_keys")!;
+        _restoreKeysMethod = _nativeMethodsType.GetMethod("rgblib_restore_keys")!;
+        _backupMethod = _nativeMethodsType.GetMethod("rgblib_backup")!;
     }
 
     public async Task<RgbLibWalletHandle> GetOrCreateWalletAsync(string walletId, CancellationToken ct = default)
@@ -75,16 +114,33 @@ public class RgbLibService : IRgbLibService
         var dbWallet = await ctx.RGBWallets.FindAsync([walletId], ct)
             ?? throw new KeyNotFoundException($"Wallet {walletId} not found");
 
-        var lazyWallet = _wallets.GetOrAdd(walletId, _ =>
-            new Lazy<RgbLibWalletHandle>(() => CreateWalletInternal(
-                walletId, 
-                dbWallet.XpubVanilla, 
-                dbWallet.XpubColored, 
-                dbWallet.MasterFingerprint,
-                dbWallet.Network,
-                RGBWalletService.ResolveAllocationsPerUtxo(dbWallet.MaxAllocationsPerUtxo))));
+        var walletDir = Path.Combine(_config.GetWalletDataDir(walletId, dbWallet.Network),
+            dbWallet.MasterFingerprint);
+        // Returning an already-built handle touches no native state. Its ExecuteAsync path owns the
+        // native-access mutex, so taking that mutex here as well would turn one long healthy call into
+        // a spurious construction timeout for every concurrent request on the same wallet.
+        if (_wallets.TryGetValue(walletId, out var cachedWallet) && cachedWallet.IsValueCreated)
+            return cachedWallet.Value;
+        return RgbNativeSendLease.WithProcessGate(walletDir, () =>
+        {
+            // Recovery is admitted by execution-context lease ownership, never by a public bypass.
+            using var walletAccess = RgbNativeSendLease.AcquireWalletConstructionAccess(walletDir);
+            if (RgbNativeSendLease.Exists(walletDir)
+                && !RgbNativeSendLease.IsOwnedByCurrentContext(walletDir))
+                throw new RgbWalletQuarantinedException(
+                    "native send helper may still own this wallet — refusing concurrent rgb-lib access");
 
-        return lazyWallet.Value;
+            var lazyWallet = _wallets.GetOrAdd(walletId, _ =>
+                new Lazy<RgbLibWalletHandle>(() => CreateWalletInternal(
+                    walletId,
+                    dbWallet.XpubVanilla,
+                    dbWallet.XpubColored,
+                    dbWallet.MasterFingerprint,
+                    dbWallet.Network,
+                    RGBWalletService.ResolveAllocationsPerUtxo(dbWallet.MaxAllocationsPerUtxo))));
+
+            return lazyWallet.Value;
+        });
     }
 
     RgbLibWalletHandle CreateWalletInternal(string walletId, string xpubVanilla, string xpubColored, string masterFingerprint, string walletNetwork, int maxAllocationsPerUtxo)
@@ -102,7 +158,7 @@ public class RgbLibService : IRgbLibService
             ["bitcoin_network"] = NetworkHelper.MapNetworkToRgbLibFormat(walletNetwork),
             ["database_type"] = "Sqlite",
             ["max_allocations_per_utxo"] = maxAllocationsPerUtxo,
-            ["supported_schemas"] = new[] { "Nia", "Cfa" }
+            ["supported_schemas"] = RgbAssetSchemaSupport.TheOnlySchemasThisPluginCanEnumerateAndSpend
         };
 
         var keysConfig = new Dictionary<string, object?>
@@ -116,40 +172,111 @@ public class RgbLibService : IRgbLibService
 
         var configJson = JsonSerializer.Serialize(walletConfig);
         var keysJson = JsonSerializer.Serialize(keysConfig);
-        RgbLibWallet wallet;
         try
         {
-            wallet = new RgbLibWallet(configJson, keysJson);
+            var wallet = new RgbLibWallet(configJson, keysJson);
+            return CreateHandleOrDisposeWallet(
+                wallet,
+                w => GoOnline(w, networkSettings.ElectrumUrl, true),
+                w =>
+                {
+                    _log.LogInformation("Wallet {WalletId} connected to {Electrum}", walletId, networkSettings.ElectrumUrl);
+                    return new RgbLibWalletHandle(w, walletId,
+                        Path.Combine(dataDir, masterFingerprint), _log);
+                },
+                w => w.Dispose(),
+                disposeError => _log.LogError(disposeError,
+                    "Failed to dispose the rgb-lib wallet for {WalletId} after a failed bring-online; its rgb_runtime.lock may still be on disk",
+                    walletId));
         }
         catch (Exception ex)
         {
-            _log.LogError(ex, "RgbLibWallet ctor failed. walletId={WalletId} dataDir={DataDir} fingerprint={Fingerprint} config={Config} keys={Keys}",
-                walletId, dataDir, masterFingerprint, configJson, keysJson);
-            throw;
+            var detailWithKeyMaterialRemoved = RgbNativeMessageSanitizer.Sanitize(ex.Message);
+            _log.LogError(
+                "Failed to bring up the rgb-lib wallet. walletId={WalletId} network={Network} failure={FailureType} detail={KeyMaterialSanitizedDetail}",
+                walletId, walletNetwork, ex.GetType().Name, detailWithKeyMaterialRemoved);
+            throw new RgbWalletConstructionException(WalletBringUpFailureForTheOperator(
+                walletId, walletNetwork, ex, detailWithKeyMaterialRemoved));
         }
-        wallet.GoOnline(networkSettings.ElectrumUrl, true);
-
-        _log.LogInformation("Wallet {WalletId} connected to {Electrum}", walletId, networkSettings.ElectrumUrl);
-        return new RgbLibWalletHandle(wallet, walletId, _log);
     }
 
-    public void UnloadWallet(string walletId) => UnloadFromCache(_wallets, walletId, _log);
+    internal void GoOnline(RgbLibWallet wallet, string electrumUrl, bool skipConsistencyCheck)
+    {
+        var walletStruct = _walletField.GetValue(wallet)!;
+        var onlineOptionsJson = JsonSerializer.Serialize(new
+        {
+            indexer_url = electrumUrl,
+            skip_consistency_check = skipConsistencyCheck,
+            vanilla_sync_lookback = 100u,
+        });
 
-    internal static void UnloadFromCache(ConcurrentDictionary<string, Lazy<RgbLibWalletHandle>> wallets, string walletId, ILogger? log)
+        var args = new object?[] { walletStruct, onlineOptionsJson };
+        var result = _goOnlineMethod.Invoke(null, args);
+
+        _walletField.SetValue(wallet, args[0]);
+
+        var onlineJson = Require(ReadNativeResult(result), "go_online");
+        _onlineJsonField.SetValue(wallet, onlineJson);
+    }
+
+    internal const string DotnetRuntimeDetailWithheldBecauseItNamesServerFilesystemPaths =
+        "the .NET runtime raised this, not rgb-lib, and the runtime's own text names server "
+        + "filesystem locations. The failure type above is the actionable part; the full detail is in "
+        + "the server log.";
+
+    internal static bool DetailWasWrittenForAnOperatorRatherThanByTheDotnetRuntime(Exception ex) =>
+        ex is RgbLib.RgbLibException
+        || Controllers.RgbOperatorFacingFailure.MessageComesFromAnOperatorFacingLayerNotTheDotnetRuntime(ex);
+
+    internal static string WalletBringUpFailureForTheOperator(
+        string walletId, string walletNetwork, Exception ex, string detailWithKeyMaterialRemoved) =>
+        $"rgb-lib could not bring up wallet {walletId} on {walletNetwork} ({ex.GetType().Name}): "
+        + (DetailWasWrittenForAnOperatorRatherThanByTheDotnetRuntime(ex)
+            ? detailWithKeyMaterialRemoved
+            : DotnetRuntimeDetailWithheldBecauseItNamesServerFilesystemPaths);
+
+    internal static THandle CreateHandleOrDisposeWallet<TWallet, THandle>(
+        TWallet wallet,
+        Action<TWallet> bringOnline,
+        Func<TWallet, THandle> buildHandle,
+        Action<TWallet> disposeWallet,
+        Action<Exception> reportDisposeFailure)
+    {
+        try
+        {
+            bringOnline(wallet);
+            return buildHandle(wallet);
+        }
+        catch
+        {
+            try { disposeWallet(wallet); }
+            catch (Exception disposeError) { reportDisposeFailure(disposeError); }
+            throw;
+        }
+    }
+
+    public bool UnloadWallet(string walletId) => UnloadFromCache(_wallets, walletId, _log);
+
+    internal static bool UnloadFromCache(ConcurrentDictionary<string, Lazy<RgbLibWalletHandle>> wallets, string walletId, ILogger? log)
     {
         if (!wallets.TryGetValue(walletId, out var lazy))
-            return;
+            return true;
 
         if (lazy.IsValueCreated)
         {
-            DisposeAndEvict(wallets, walletId, lazy, log);
-            return;
+            return DisposeAndEvict(wallets, walletId, lazy, log);
         }
 
-        Task.Run(() => DisposeAndEvict(wallets, walletId, lazy, log));
+        if (PendingConstructionDisposals.TryAdd(lazy, 0))
+            _ = Task.Run(() =>
+            {
+                try { DisposeAndEvict(wallets, walletId, lazy, log); }
+                finally { PendingConstructionDisposals.TryRemove(lazy, out _); }
+            });
+        return false;
     }
 
-    static void DisposeAndEvict(ConcurrentDictionary<string, Lazy<RgbLibWalletHandle>> wallets, string walletId, Lazy<RgbLibWalletHandle> lazy, ILogger? log)
+    static bool DisposeAndEvict(ConcurrentDictionary<string, Lazy<RgbLibWalletHandle>> wallets, string walletId, Lazy<RgbLibWalletHandle> lazy, ILogger? log)
     {
         RgbLibWalletHandle handle;
         try
@@ -160,40 +287,60 @@ public class RgbLibService : IRgbLibService
         {
             log?.LogDebug(ex, "Wallet {WalletId} construction had failed; removing cache entry", walletId);
             wallets.TryRemove(new KeyValuePair<string, Lazy<RgbLibWalletHandle>>(walletId, lazy));
-            return;
+            return true;
         }
 
-        handle.Dispose();
+        try
+        {
+            handle.Dispose();
+        }
+        catch (Exception disposeFault)
+        {
+            log?.LogWarning(disposeFault,
+                "Wallet {WalletId} threw while disposing; falling through to the not-freed path so the cache entry is still evicted once the native wallet is released",
+                walletId);
+        }
 
         if (handle.NativeWalletFreed)
         {
             wallets.TryRemove(new KeyValuePair<string, Lazy<RgbLibWalletHandle>>(walletId, lazy));
             log?.LogInformation("Wallet {WalletId} unloaded", walletId);
+            return true;
         }
         else
         {
             log?.LogWarning(
                 "Wallet {WalletId} unload timed out with an operation still running; native wallet will be freed after the operation completes",
                 walletId);
-            Task.Run(() => CompleteTimedOutDisposeAndEvict(wallets, walletId, lazy, handle, log));
+            if (handle.TryStartDeferredDispose())
+                _ = Task.Run(() => CompleteTimedOutDisposeAndEvictAsync(
+                    wallets, walletId, lazy, handle, log));
+            return false;
         }
     }
 
-    static void CompleteTimedOutDisposeAndEvict(
+    static async Task CompleteTimedOutDisposeAndEvictAsync(
         ConcurrentDictionary<string, Lazy<RgbLibWalletHandle>> wallets,
         string walletId,
         Lazy<RgbLibWalletHandle> lazy,
         RgbLibWalletHandle handle,
         ILogger? log)
     {
-        try
+        while (!handle.NativeWalletFreed)
         {
-            handle.CompleteTimedOutDispose();
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException and not AccessViolationException and not AppDomainUnloadedException and not BadImageFormatException)
-        {
-            log?.LogWarning(ex, "Wallet {WalletId} deferred unload failed; restart required to reclaim it", walletId);
-            return;
+            try
+            {
+                handle.CompleteTimedOutDispose();
+            }
+            catch (Exception ex) when (ex is IOException or RgbWalletQuarantinedException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250));
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException and not AccessViolationException and not AppDomainUnloadedException and not BadImageFormatException)
+            {
+                log?.LogWarning(ex, "Wallet {WalletId} deferred unload failed; restart required to reclaim it", walletId);
+                return;
+            }
         }
 
         if (handle.NativeWalletFreed)
@@ -213,7 +360,14 @@ public class RgbLibService : IRgbLibService
         return await handle.ExecuteAsync(wallet =>
         {
             ct.ThrowIfCancellationRequested();
-            return wallet.GetAddress();
+            var walletStruct = _walletField.GetValue(wallet)!;
+
+            var args = new object?[] { walletStruct };
+            var result = _getAddressMethod.Invoke(null, args);
+
+            _walletField.SetValue(wallet, args[0]);
+
+            return Require(ReadNativeResult(result), "get_address");
         }, ct);
     }
 
@@ -224,7 +378,20 @@ public class RgbLibService : IRgbLibService
         return await handle.ExecuteAsync(wallet =>
         {
             ct.ThrowIfCancellationRequested();
-            var balanceJson = wallet.GetBtcBalance(sync);
+            // rgb-lib's parameter is skipSync, so it is the INVERSE of this method's `sync`. Passing `sync`
+            // straight through — as this line did — silently reversed every caller: the three that ask for a
+            // sync got none, and the page loads that take the `sync: false` default were the only ones
+            // syncing, on the request path. The reflected argument array cannot name its parameters, so
+            // the negation at the skipSync position is the whole of what keeps the flip right.
+            var walletStruct = _walletField.GetValue(wallet)!;
+            var onlineJson = (string)(_onlineJsonField.GetValue(wallet) ?? throw new RgbLibException("Wallet is offline"));
+
+            var args = new object?[] { walletStruct, onlineJson, !sync };
+            var result = _getBtcBalanceMethod.Invoke(null, args);
+
+            _walletField.SetValue(wallet, args[0]);
+
+            var balanceJson = Require(ReadNativeResult(result), "get_btc_balance");
             var balance = JsonSerializer.Deserialize<BtcBalanceResponse>(balanceJson);
 
             return new BtcBalance(
@@ -241,21 +408,33 @@ public class RgbLibService : IRgbLibService
         return await handle.ExecuteAsync(wallet =>
         {
             ct.ThrowIfCancellationRequested();
-            var assetsJson = wallet.ListAssets("[]");
-            var assets = JsonSerializer.Deserialize<ListAssetsResponse>(assetsJson);
+            var walletStruct = _walletField.GetValue(wallet)!;
 
-            return assets?.Nia?.Select(a => new RgbAsset
-            {
-                AssetId = a.AssetId ?? "",
-                Ticker = a.Ticker ?? "",
-                Name = a.Name ?? "",
-                Precision = a.Precision,
-                IssuedSupply = a.IssuedSupply,
-                Balance = a.Balance?.Settled ?? 0,
-                FutureBalance = a.Balance?.Future ?? 0,
-                SpendableBalance = a.Balance?.Spendable ?? 0
-            }).ToList() ?? [];
+            var args = new object?[] { walletStruct, "[]" };
+            var result = _listAssetsMethod.Invoke(null, args);
+
+            _walletField.SetValue(wallet, args[0]);
+
+            var assetsJson = Require(ReadNativeResult(result), "list_assets");
+            return InterpretListAssets(assetsJson);
         }, ct);
+    }
+
+    internal static List<RgbAsset> InterpretListAssets(string assetsJson)
+    {
+        var assets = JsonSerializer.Deserialize<ListAssetsResponse>(assetsJson);
+
+        return assets?.Nia?.Select(a => new RgbAsset
+        {
+            AssetId = a.AssetId ?? "",
+            Ticker = a.Ticker ?? "",
+            Name = a.Name ?? "",
+            Precision = a.Precision,
+            IssuedSupply = a.IssuedSupply,
+            Balance = a.Balance?.Settled ?? 0,
+            FutureBalance = a.Balance?.Future ?? 0,
+            SpendableBalance = a.Balance?.Spendable ?? 0
+        }).ToList() ?? [];
     }
 
     public async Task<InvoiceResponse> BlindReceiveAsync(string walletId, string? assetId, long? amount, long? expiration, int minConfirmations = 1, CancellationToken ct = default)
@@ -284,12 +463,8 @@ public class RgbLibService : IRgbLibService
             var args = new object?[] { walletStruct, assetId, assignment, expirationTs, transportEndpoints, minConfirmations.ToString() };
             var result = _blindReceiveMethod.Invoke(null, args);
             
-            var invoiceJson = GetNativeResult(result);
-            if (invoiceJson == null)
-            {
-                throw new RgbLibException(GetNativeError(result) ?? "blind_receive failed");
-            }
-            
+            var invoiceJson = Require(ReadNativeResult(result), "blind_receive");
+
             var invoice = JsonSerializer.Deserialize<BlindReceiveResponse>(invoiceJson);
             return new InvoiceResponse
             {
@@ -313,28 +488,8 @@ public class RgbLibService : IRgbLibService
 
             var args = new object?[] { walletStruct, onlineJson, false, false };
             var result = _listUnspentsMethod.Invoke(null, args);
-            
-            var unspentsJson = GetNativeResult(result);
-            if (unspentsJson == null)
-            {
-                return new List<UnspentOutput>();
-            }
-            
-            var unspents = JsonSerializer.Deserialize<List<UnspentOutputResponse>>(unspentsJson);
-            return unspents?.Select(u => new UnspentOutput(
-                new UtxoInfo
-                {
-                    Outpoint = new Outpoint(u.Utxo?.Outpoint?.Txid ?? "", (int)(u.Utxo?.Outpoint?.Vout ?? 0)),
-                    BtcAmount = u.Utxo?.BtcAmount ?? 0,
-                    Colorable = u.Utxo?.Colorable ?? false
-                },
-                u.RgbAllocations?.Select(a => new RgbAllocation
-                {
-                    AssetId = a.AssetId ?? "",
-                    Amount = a.Amount,
-                    Settled = a.Settled
-                }).ToList() ?? []
-            )).ToList() ?? [];
+
+            return InterpretListUnspents(ReadNativeResult(result));
         }, ct);
     }
 
@@ -351,13 +506,7 @@ public class RgbLibService : IRgbLibService
             var args = new object?[] { walletStruct, onlineJson, false };
             var result = _listTransactionsMethod.Invoke(null, args);
 
-            var json = GetNativeResult(result);
-            if (json == null)
-            {
-                return new List<BtcTransaction>();
-            }
-
-            return JsonSerializer.Deserialize<List<BtcTransaction>>(json) ?? [];
+            return InterpretListBtcTransactions(ReadNativeResult(result));
         }, ct);
     }
 
@@ -371,23 +520,12 @@ public class RgbLibService : IRgbLibService
             var walletStruct = _walletField.GetValue(wallet)!;
             var onlineJson = (string)(_onlineJsonField.GetValue(wallet) ?? throw new RgbLibException("Wallet is offline"));
 
-            var args = new object?[] { walletStruct, onlineJson, true, count.ToString(), size.ToString(), ((int)feeRate).ToString(), false, false };
+            var args = new object?[] { walletStruct, onlineJson, false, count.ToString(), size.ToString(), ((int)feeRate).ToString(), false, true };
             var result = _createUtxosBeginMethod.Invoke(null, args);
 
             _walletField.SetValue(wallet, args[0]);
 
-            var psbt = GetNativeResult(result);
-            if (psbt == null)
-            {
-                var error = GetNativeError(result);
-                if (error?.Contains("AlreadyAvailable", StringComparison.OrdinalIgnoreCase) == true)
-                {
-                    return "";
-                }
-                throw new RgbLibException(error ?? "create_utxos_begin failed");
-            }
-            
-            return psbt;
+            return InterpretCreateUtxosBegin(ReadNativeResult(result));
         }, ct);
     }
 
@@ -406,23 +544,12 @@ public class RgbLibService : IRgbLibService
 
             _walletField.SetValue(wallet, args[0]);
 
-            var resultJson = GetNativeResult(result);
-            if (resultJson == null)
-            {
-                throw new RgbLibException(GetNativeError(result) ?? "create_utxos_end failed");
-            }
-            
-            return resultJson;
+            return Require(ReadNativeResult(result), "create_utxos_end");
         }, ct);
     }
 
     public async Task<List<RgbTransfer>> ListTransfersAsync(string walletId, string? assetId = null, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(assetId))
-        {
-            return [];
-        }
-
         await using var ctx = _db.CreateContext();
         var dbWallet = await ctx.RGBWallets.FindAsync([walletId], ct)
             ?? throw new KeyNotFoundException($"Wallet {walletId} not found");
@@ -433,10 +560,27 @@ public class RgbLibService : IRgbLibService
             _log.LogWarning("RGB sqlite db not found at {Path}", dbPath);
             return [];
         }
-        
+
+        var transfers = await QueryRecentTransfersAsync(dbPath, assetId, ct);
+        _log.LogInformation("ListTransfersAsync: Found {Count} transfers{AssetFilter}",
+            transfers.Count, assetId == null ? "" : " for the selected asset");
+        return transfers;
+    }
+
+    internal static async Task<List<RgbTransfer>> QueryRecentTransfersAsync(
+        string dbPath, string? assetId = null, CancellationToken ct = default)
+    {
+        if (assetId?.Length > 1024)
+            throw new InvalidDataException("RGB asset identifier exceeds its size bound");
+        if (!File.Exists(dbPath)) return [];
+
         var transfers = new List<RgbTransfer>();
-        var connStr = $"Data Source={dbPath};Mode=ReadOnly";
-        await using var conn = new Microsoft.Data.Sqlite.SqliteConnection(connStr);
+        var builder = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly
+        };
+        await using var conn = new Microsoft.Data.Sqlite.SqliteConnection(builder.ConnectionString);
         await conn.OpenAsync(ct);
         
         await using var cmd = conn.CreateCommand();
@@ -444,23 +588,31 @@ public class RgbLibService : IRgbLibService
             SELECT t.idx, bt.status, t.recipient_id, bt.txid, t.incoming,
                    CASE
                        WHEN t.incoming = 0 THEN
-                           json_extract(t.requested_assignment, '$.Fungible')
+                           CASE WHEN json_valid(t.requested_assignment)
+                                THEN json_array(json(t.requested_assignment)) END
                        ELSE
-                           COALESCE(
-                               (SELECT json_extract(c.assignment, '$.Fungible')
-                                FROM coloring c WHERE c.asset_transfer_idx = at.idx AND c.type IN (1, 2) LIMIT 1),
-                               (SELECT json_extract(c.assignment, '$.Fungible')
-                                FROM coloring c WHERE c.asset_transfer_idx = at.idx AND c.type != 3 LIMIT 1),
-                               (SELECT json_extract(c.assignment, '$.Fungible')
-                                FROM coloring c WHERE c.asset_transfer_idx = at.idx LIMIT 1)
-                           )
+                           (SELECT json_group_array(json(assignment))
+                            FROM (SELECT DISTINCT c.txo_idx AS txo_idx, c.assignment AS assignment
+                                  FROM coloring c
+                                  WHERE c.asset_transfer_idx = at.idx
+                                    AND c.type IN (1, 2)
+                                    AND json_valid(c.assignment)
+                                  ORDER BY txo_idx, assignment
+                                  LIMIT @assignmentLimit))
                    END,
-                   t.recipient_type
+                   t.recipient_type, at.asset_id, COALESCE(a.ticker, '')
             FROM transfer t
             JOIN asset_transfer at ON t.asset_transfer_idx = at.idx
             JOIN batch_transfer bt ON at.batch_transfer_idx = bt.idx
-            WHERE at.asset_id = @assetId";
-        cmd.Parameters.AddWithValue("@assetId", assetId);
+            -- beta.30 maps Asset::Id to asset.id and AssetTransfer::AssetId to
+            -- asset_transfer.asset_id; the foreign key joins those differently named columns.
+            JOIN asset a ON a.id = at.asset_id
+            WHERE (@assetId IS NULL OR at.asset_id = @assetId)
+            ORDER BY t.idx DESC
+            LIMIT @limit";
+        cmd.Parameters.AddWithValue("@assetId", (object?)assetId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@limit", MaxTransferListRows);
+        cmd.Parameters.AddWithValue("@assignmentLimit", MaxCreditedAssignmentsPerAssetTransfer);
 
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
@@ -484,12 +636,137 @@ public class RgbLibService : IRgbLibService
                 RecipientId = reader.IsDBNull(2) ? null : reader.GetString(2),
                 Txid = reader.IsDBNull(3) ? null : reader.GetString(3),
                 Kind = kind,
-                Amount = reader.IsDBNull(5) ? 0 : reader.GetInt64(5)
+                Amount = RgbAssignmentJson.ToSignedByUnderReportingNeverOverReporting(
+                    RgbAssignmentJson.SumFungibleSaturatingRatherThanWrapping(
+                        reader.IsDBNull(5) ? null : reader.GetString(5))),
+                AssetId = reader.GetString(7),
+                AssetTicker = reader.GetString(8)
             });
         }
-        
-        _log.LogInformation("ListTransfersAsync: Found {Count} transfers for asset {AssetId}", transfers.Count, assetId[..Math.Min(30, assetId.Length)]);
         return transfers;
+    }
+
+    public async Task<List<RgbMatchedTransfer>> ListIncomingTransfersForRecipientsAsync(
+        string walletId, IReadOnlyCollection<string> recipientIds, string? assetId = null,
+        CancellationToken ct = default)
+    {
+        await using var ctx = _db.CreateContext();
+        var dbWallet = await ctx.RGBWallets.FindAsync([walletId], ct)
+            ?? throw new KeyNotFoundException($"Wallet {walletId} not found");
+        var dbPath = Path.Combine(
+            _config.GetWalletDataDir(walletId, dbWallet.Network),
+            dbWallet.MasterFingerprint, "rgb_lib_db");
+        return await QueryIncomingTransfersForRecipientsAsync(
+            dbPath, recipientIds, assetId, ct);
+    }
+
+    internal const int MaxCreditedAssignmentsPerAssetTransfer = 1024;
+
+    internal static async Task<List<RgbMatchedTransfer>> QueryIncomingTransfersForRecipientsAsync(
+        string dbPath, IReadOnlyCollection<string> recipientIds, string? assetId = null,
+        CancellationToken ct = default)
+    {
+        const int maxRecipients = RGBInvoiceListener.DurableInvoicePageSize;
+        if (recipientIds.Count > maxRecipients)
+            throw new InvalidOperationException("RGB transfer recipient query exceeds its work bound");
+        var recipients = recipientIds
+            .Where(r => !string.IsNullOrWhiteSpace(r))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (recipients.Count == 0) return [];
+        if (recipients.Any(r => r.Length > TransportEndpointValidator.MaxRgbInvoiceLength))
+            throw new InvalidDataException("RGB transfer recipient identifier exceeds its size bound");
+        if (!File.Exists(dbPath)) return [];
+
+        var builder = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly
+        };
+        await using var conn = new Microsoft.Data.Sqlite.SqliteConnection(builder.ConnectionString);
+        await conn.OpenAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        var recipientParameters = new List<string>(recipients.Count);
+        for (var i = 0; i < recipients.Count; i++)
+        {
+            var name = $"@recipient{i}";
+            recipientParameters.Add(name);
+            cmd.Parameters.AddWithValue(name, recipients[i]);
+        }
+        cmd.Parameters.AddWithValue("@assetId", (object?)assetId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@limit", maxRecipients);
+        cmd.Parameters.AddWithValue("@assignmentLimit", MaxCreditedAssignmentsPerAssetTransfer);
+        cmd.CommandText = $$"""
+            WITH candidate AS (
+                SELECT t.idx, bt.status, t.recipient_id, bt.txid, t.incoming,
+                       (SELECT json_group_array(json(assignment))
+                        FROM (SELECT DISTINCT c.txo_idx AS txo_idx, c.assignment AS assignment
+                              FROM coloring c
+                              WHERE c.asset_transfer_idx = atx.idx
+                                AND c.type IN (1, 2)
+                                AND json_valid(c.assignment)
+                              ORDER BY txo_idx, assignment
+                              LIMIT @assignmentLimit)) AS credited_assignments,
+                       t.recipient_type,
+                       atx.asset_id AS asset_id,
+                       COALESCE(a.ticker, '') AS ticker,
+                       a.name AS name,
+                       a.precision AS precision,
+                       a.initial_supply AS issued_supply,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY t.recipient_id ORDER BY t.idx) AS recipient_rank
+                FROM transfer t
+                INNER JOIN asset_transfer atx ON t.asset_transfer_idx = atx.idx
+                INNER JOIN batch_transfer bt ON atx.batch_transfer_idx = bt.idx
+                -- beta.30 maps Asset::Id to asset.id and AssetTransfer::AssetId to
+                -- asset_transfer.asset_id; the foreign key joins those differently named columns.
+                INNER JOIN asset a ON a.id = atx.asset_id
+                WHERE t.incoming = 1
+                  AND bt.status IN (1, 2, 3, 4)
+                  AND t.recipient_id IN ({{string.Join(", ", recipientParameters)}})
+                  AND (@assetId IS NULL OR atx.asset_id = @assetId)
+            )
+            SELECT idx, status, recipient_id, txid, incoming, credited_assignments, recipient_type,
+                   asset_id, ticker, name, precision, issued_supply
+            FROM candidate
+            WHERE recipient_rank = 1
+            ORDER BY idx
+            LIMIT @limit
+            """;
+
+        var results = new List<RgbMatchedTransfer>(recipients.Count);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var recipientType = reader.IsDBNull(6) ? null : reader.GetString(6);
+            var kind = recipientType == null ? 0
+                : recipientType.Contains("\"Blind\"", StringComparison.Ordinal) ? 1 : 2;
+            var issuedSupply = reader.IsDBNull(11)
+                ? 0
+                : ulong.TryParse(Convert.ToString(reader.GetValue(11)), out var parsedSupply)
+                    ? parsedSupply : 0;
+            var matchedAsset = new RgbAsset
+            {
+                AssetId = reader.GetString(7),
+                Ticker = reader.GetString(8),
+                Name = reader.GetString(9),
+                Precision = reader.GetInt32(10),
+                IssuedSupply = issuedSupply
+            };
+            results.Add(new RgbMatchedTransfer(matchedAsset.AssetId, matchedAsset,
+                new RgbTransfer
+                {
+                    Idx = reader.GetInt32(0),
+                    Status = reader.GetInt32(1),
+                    RecipientId = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    Txid = reader.IsDBNull(3) ? null : reader.GetString(3),
+                    Kind = kind,
+                    Amount = RgbAssignmentJson.ToSignedByUnderReportingNeverOverReporting(
+                        RgbAssignmentJson.SumFungibleSaturatingRatherThanWrapping(
+                            reader.IsDBNull(5) ? null : reader.GetString(5)))
+                }));
+        }
+        return results;
     }
 
     public async Task RefreshAsync(string walletId, CancellationToken ct = default)
@@ -503,9 +780,49 @@ public class RgbLibService : IRgbLibService
             var onlineJson = (string)(_onlineJsonField.GetValue(wallet) ?? throw new RgbLibException("Wallet is offline"));
 
             var args = new object?[] { walletStruct, onlineJson, null, "[]", false };
-            _refreshMethod.Invoke(null, args);
+            var result = _refreshMethod.Invoke(null, args);
 
             _walletField.SetValue(wallet, args[0]);
+
+            // WHY: fail-closed — anything other than a confirmed Ok-with-payload (null result,
+            // Err, or Ok with a null pointer) must throw so the write-ahead path quarantines.
+            Require(ReadNativeResult(result), "refresh");
+        }, ct);
+    }
+
+    public async Task<string> SnapshotStockAsync(string walletId, CancellationToken ct = default)
+    {
+        var handle = await GetOrCreateWalletAsync(walletId, ct);
+
+        await using var ctx = _db.CreateContext();
+        var dbWallet = await ctx.RGBWallets.FindAsync([walletId], ct)
+            ?? throw new KeyNotFoundException($"Wallet {walletId} not found");
+        var stockDir = RgbStockDurability.ResolveStockDir(
+            _config.GetWalletDataDir(walletId, dbWallet.Network), dbWallet.MasterFingerprint);
+
+        return await handle.ExecuteAsync(_ =>
+        {
+            ct.ThrowIfCancellationRequested();
+            return RgbStockDurability.SnapshotStock(stockDir);
+        }, ct);
+    }
+
+    public async Task<RgbVerificationSnapshot> SnapshotVerificationStateAsync(
+        string walletId, CancellationToken ct = default)
+    {
+        var handle = await GetOrCreateWalletAsync(walletId, ct);
+
+        await using var ctx = _db.CreateContext();
+        var dbWallet = await ctx.RGBWallets.FindAsync([walletId], ct)
+            ?? throw new KeyNotFoundException($"Wallet {walletId} not found");
+        var walletDataDir = _config.GetWalletDataDir(walletId, dbWallet.Network);
+        var walletDir = Path.Combine(walletDataDir, dbWallet.MasterFingerprint);
+        var stockDir = RgbStockDurability.ResolveStockDir(walletDataDir, dbWallet.MasterFingerprint);
+
+        return await handle.ExecuteAsync(_ =>
+        {
+            ct.ThrowIfCancellationRequested();
+            return RgbStockDurability.SnapshotVerificationState(stockDir, walletDir);
         }, ct);
     }
     
@@ -517,7 +834,14 @@ public class RgbLibService : IRgbLibService
         {
             ct.ThrowIfCancellationRequested();
             var amountsJson = JsonSerializer.Serialize(amounts.Select(a => a.ToString()).ToArray());
-            var assetJson = wallet.IssueAssetNia(ticker, name, precision.ToString(), amountsJson);
+            var walletStruct = _walletField.GetValue(wallet)!;
+
+            var args = new object?[] { walletStruct, ticker, name, precision.ToString(), amountsJson };
+            var result = _issueAssetNiaMethod.Invoke(null, args);
+
+            _walletField.SetValue(wallet, args[0]);
+
+            var assetJson = Require(ReadNativeResult(result), "issue_asset_nia");
             var asset = JsonSerializer.Deserialize<IssueAssetResponse>(assetJson);
             
             return new RgbAsset
@@ -526,7 +850,7 @@ public class RgbLibService : IRgbLibService
                 Ticker = asset?.Ticker ?? ticker,
                 Name = asset?.Name ?? name,
                 Precision = asset?.Precision ?? precision,
-                IssuedSupply = asset?.IssuedSupply ?? amounts.Sum()
+                IssuedSupply = asset?.IssuedSupply ?? checked((ulong)amounts.Sum())
             };
         }, ct);
     }
@@ -546,11 +870,7 @@ public class RgbLibService : IRgbLibService
 
             _walletField.SetValue(wallet, args[0]);
 
-            var psbt = GetNativeResult(result);
-            if (psbt == null)
-                throw new RgbLibException(GetNativeError(result) ?? "send_begin failed");
-
-            return psbt;
+            return Require(ReadNativeResult(result), "send_begin");
         }, ct);
     }
 
@@ -569,9 +889,7 @@ public class RgbLibService : IRgbLibService
 
             _walletField.SetValue(wallet, args[0]);
 
-            var json = GetNativeResult(result);
-            if (json == null)
-                throw new RgbLibException(GetNativeError(result) ?? "send_end failed");
+            var json = Require(ReadNativeResult(result), "send_end");
 
             using var doc = JsonDocument.Parse(json);
             if (doc.RootElement.TryGetProperty("txid", out var txidProp))
@@ -581,48 +899,138 @@ public class RgbLibService : IRgbLibService
         }, ct);
     }
 
+    static readonly SemaphoreSlim _backupGate = new(1, 1);
+    static readonly ConcurrentDictionary<string, RestoreCooldownGate> _backupCooldowns = new();
+    static long _backupGateHolderSinceMonotonicTimestamp;
+    static string? _backupGateHolderWalletId;
+
+    internal static RestoreCooldownGate GetOrCreateBackupCooldown(string walletId, Func<RestoreCooldownGate> create) =>
+        _backupCooldowns.GetOrAdd(walletId, _ => create());
+
+    internal static string DescribeElapsedWithoutOverstatingIt(TimeSpan elapsed) =>
+        elapsed.TotalMinutes >= 1
+            ? $"{(int)elapsed.TotalMinutes} minute{((int)elapsed.TotalMinutes == 1 ? "" : "s")}"
+            : $"{(int)elapsed.TotalSeconds} second{((int)elapsed.TotalSeconds == 1 ? "" : "s")}";
+
+    internal static TimeSpan ResolveBackupCooldown(RGBConfiguration cfg) =>
+        TimeSpan.FromSeconds(Math.Clamp(cfg.BackupCooldownSeconds,
+            RGBConfiguration.BackupCooldownSecondsMin, RGBConfiguration.BackupCooldownSecondsMax));
+
+    internal static TimeSpan ResolveBackupStartWaitTimeout(RGBConfiguration cfg) =>
+        TimeSpan.FromSeconds(Math.Clamp(cfg.BackupStartWaitTimeoutSeconds,
+            RGBConfiguration.BackupStartWaitTimeoutSecondsMin,
+            RGBConfiguration.BackupStartWaitTimeoutSecondsMax));
+
+    internal static TimeSpan ResolveBackupStuckThreshold(RGBConfiguration cfg) =>
+        TimeSpan.FromSeconds(Math.Clamp(cfg.BackupStuckThresholdSeconds,
+            RGBConfiguration.BackupStuckThresholdSecondsMin,
+            RGBConfiguration.BackupStuckThresholdSecondsMax));
+
+    internal static string DescribeRetryDelayWithoutUnderstatingIt(TimeSpan remaining)
+    {
+        var seconds = (int)Math.Ceiling(remaining.TotalSeconds);
+        if (seconds < 60)
+            return $"{seconds} second{(seconds == 1 ? "" : "s")}";
+        var minutes = (int)Math.Ceiling(seconds / 60.0);
+        return $"{minutes} minute{(minutes == 1 ? "" : "s")}";
+    }
+
+    internal static string DescribeBackupCooldownRefusal(TimeSpan remaining) =>
+        "A wallet backup was attempted recently. Try again in "
+        + $"{DescribeRetryDelayWithoutUnderstatingIt(remaining)}.";
+
+    internal static string DescribeBackupGateRefusal(TimeSpan heldFor, TimeSpan stuckThreshold) =>
+        heldFor > stuckThreshold
+            ? "Another wallet backup has been holding this lock for at least "
+              + $"{DescribeElapsedWithoutOverstatingIt(heldFor)}. If it does not clear on its own, "
+              + "restart BTCPay to release it."
+            : "Another wallet backup is currently in progress. Try again shortly.";
+
     public async Task<string> BackupWalletAsync(string walletId, string password, CancellationToken ct = default)
     {
+        if (RestoreProcessRunner.ContainsALineBreakTheSingleLineStdinTransportCannotCarry(password))
+            throw new InvalidOperationException(
+                RestoreProcessRunner.BackupPasswordLineBreakRefusal);
+
         var handle = await GetOrCreateWalletAsync(walletId, ct);
+
+        var cooldown = GetOrCreateBackupCooldown(walletId,
+            () => new RestoreCooldownGate(ResolveBackupCooldown(_config)));
+        var nowUtc = DateTimeOffset.UtcNow;
+        if (cooldown.IsCoolingDown(nowUtc))
+            throw new InvalidOperationException(DescribeBackupCooldownRefusal(cooldown.Remaining(nowUtc)));
+
         var tempPath = Path.Combine(Path.GetTempPath(), $"rgb-backup-{walletId}-{Guid.NewGuid():N}.rgb");
 
-        await handle.ExecuteAsync(wallet =>
+        var entered = await _backupGate.WaitAsync(TimeSpan.Zero, ct);
+        if (!entered)
         {
-            ct.ThrowIfCancellationRequested();
-            wallet.Backup(tempPath, password);
-        }, ct);
+            var holderSinceTimestamp = Interlocked.Read(ref _backupGateHolderSinceMonotonicTimestamp);
+            var heldFor = holderSinceTimestamp == 0
+                ? TimeSpan.Zero
+                : Stopwatch.GetElapsedTime(holderSinceTimestamp);
+            var stuckThreshold = ResolveBackupStuckThreshold(_config);
+            if (heldFor > stuckThreshold)
+                _log.LogWarning(
+                    "Wallet backup gate has been held by wallet {HolderWalletId} for {HeldForSeconds:N0}s, past the {ThresholdSeconds}s stuck threshold",
+                    Volatile.Read(ref _backupGateHolderWalletId), heldFor.TotalSeconds, stuckThreshold.TotalSeconds);
+            throw new InvalidOperationException(DescribeBackupGateRefusal(heldFor, stuckThreshold));
+        }
+
+        try
+        {
+            var afterAcquiringTheGateUtc = DateTimeOffset.UtcNow;
+            if (cooldown.IsCoolingDown(afterAcquiringTheGateUtc))
+                throw new InvalidOperationException(
+                    DescribeBackupCooldownRefusal(cooldown.Remaining(afterAcquiringTheGateUtc)));
+
+            Interlocked.Exchange(ref _backupGateHolderSinceMonotonicTimestamp, Stopwatch.GetTimestamp());
+            Volatile.Write(ref _backupGateHolderWalletId, walletId);
+            using var startWait = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            startWait.CancelAfter(ResolveBackupStartWaitTimeout(_config));
+
+            try
+            {
+                await handle.ExecuteAsync(wallet =>
+                {
+                    startWait.Token.ThrowIfCancellationRequested();
+                    Backup(wallet, tempPath, password);
+                }, startWait.Token);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw new InvalidOperationException(
+                    "Timed out waiting to start the wallet backup. No backup was written; try again. "
+                    + "If it keeps timing out, restart BTCPay — that releases any wallet operation "
+                    + "still holding this wallet.");
+            }
+            finally
+            {
+                cooldown.RecordAttempt(DateTimeOffset.UtcNow);
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref _backupGateHolderWalletId, null);
+            Interlocked.Exchange(ref _backupGateHolderSinceMonotonicTimestamp, 0);
+            _backupGate.Release();
+        }
 
         return tempPath;
     }
 
-    public void RestoreBackup(string backupPath, string password, string targetDir)
+    internal void Backup(RgbLibWallet wallet, string backupPath, string password)
     {
-        var args = new object?[] { backupPath, password, targetDir };
-        var result = _restoreBackupMethod.Invoke(null, args);
+        var walletStruct = _walletField.GetValue(wallet)!;
+        var args = new object?[] { walletStruct, backupPath, password };
+        var result = (CResult)_backupMethod.Invoke(null, args)!;
 
-        if (result == null)
-            throw new RgbLibException("restore_backup returned null");
+        _walletField.SetValue(wallet, args[0]);
 
-        var cResultType = result.GetType();
-        var isSuccessProp = cResultType.GetProperty("IsSuccess");
-        if (isSuccessProp == null)
-            throw new RgbLibException("restore_backup: cannot read result type");
-
-        var isSuccess = (bool)(isSuccessProp.GetValue(result) ?? false);
-        if (!isSuccess)
+        if (result.result != CResultValue.Ok)
         {
-            var errorMsg = "restore_backup failed";
-            try
-            {
-                var getError = cResultType.GetMethod("GetError");
-                if (getError != null)
-                    errorMsg = getError.Invoke(result, null)?.ToString() ?? errorMsg;
-            }
-            catch (Exception ex)
-            {
-                _log.LogDebug(ex, "Could not extract error from CResult");
-            }
-            throw new RgbLibException(errorMsg);
+            FreeCResultErrorString(result);
+            throw new RgbLibException("Failed to backup");
         }
     }
 
@@ -651,7 +1059,7 @@ public class RgbLibService : IRgbLibService
     [DllImport("rgblibcffi", CallingConvention = CallingConvention.Cdecl)]
     static extern void rgblib_string_free(IntPtr ptr);
 
-    string ReadRgbLibString(CResultString result, string call)
+    internal string ReadRgbLibString(CResultString result, string call)
     {
         try
         {
@@ -663,7 +1071,7 @@ public class RgbLibService : IRgbLibService
         finally
         {
             if (result.inner != IntPtr.Zero)
-                rgblib_string_free(result.inner);
+                _stringFree(result.inner);
         }
     }
 
@@ -694,11 +1102,25 @@ public class RgbLibService : IRgbLibService
         }, ct);
     }
 
+    internal const ulong RawUtf8StringOpaqueType = 0;
+
+    internal void FreeCResultErrorString(CResult result)
+    {
+        if (result.result == CResultValue.Ok)
+            return;
+        if (result.inner.ty != RawUtf8StringOpaqueType)
+            return;
+        if (result.inner.ptr == IntPtr.Zero)
+            return;
+        _stringFree(result.inner.ptr);
+    }
+
     public RgbInvoiceData DecodeInvoice(string invoiceString)
     {
         var newResult = rgblib_invoice_new(invoiceString);
         if (newResult.result != CResultValue.Ok)
         {
+            FreeCResultErrorString(newResult);
             throw new RgbLibException("Invalid RGB invoice");
         }
 
@@ -706,12 +1128,7 @@ public class RgbLibService : IRgbLibService
         try
         {
             var dataResult = rgblib_invoice_data(ref invoiceStruct);
-            var json = (string?)null;
-            if (dataResult.result == CResultValue.Ok && dataResult.inner != IntPtr.Zero)
-                json = Marshal.PtrToStringUTF8(dataResult.inner);
-
-            if (json == null)
-                throw new RgbLibException("Failed to decode invoice data");
+            var json = ReadRgbLibString(dataResult, "invoice_data");
 
             _log.LogDebug("Decoded invoice for recipient {RecipientId}",
                 json.Length > 200 ? "(large payload)" : "(ok)");
@@ -726,7 +1143,9 @@ public class RgbLibService : IRgbLibService
 
     public RgbKeys GenerateKeys(string network)
     {
-        var keysJson = RgbLibWallet.GenerateKeys(NetworkHelper.MapNetworkToRgbLibFormat(network));
+        var args = new object?[] { NetworkHelper.MapNetworkToRgbLibFormat(network), "Taproot" };
+        var result = _generateKeysMethod.Invoke(null, args);
+        var keysJson = Require(ReadNativeResult(result), "generate_keys");
         var keys = JsonSerializer.Deserialize<GenerateKeysResponse>(keysJson);
 
         return new RgbKeys
@@ -741,7 +1160,9 @@ public class RgbLibService : IRgbLibService
 
     public RgbKeys RestoreKeysFromMnemonic(string mnemonic, string network)
     {
-        var keysJson = RgbLibWallet.RestoreKeys(NetworkHelper.MapNetworkToRgbLibFormat(network), mnemonic);
+        var args = new object?[] { NetworkHelper.MapNetworkToRgbLibFormat(network), mnemonic, "Taproot" };
+        var result = _restoreKeysMethod.Invoke(null, args);
+        var keysJson = Require(ReadNativeResult(result), "restore_keys");
         var keys = JsonSerializer.Deserialize<GenerateKeysResponse>(keysJson);
 
         return new RgbKeys
@@ -754,24 +1175,84 @@ public class RgbLibService : IRgbLibService
         };
     }
 
-    string? GetNativeResult(object? result)
+    // Exactly one of Payload / Error is non-null for a well-formed result. Both null means the
+    // native side returned something this binding cannot interpret, which is a failure — never an
+    // empty success.
+    internal readonly record struct NativeCallResult(string? Payload, string? Error)
     {
-        if (result == null) return null;
-        var resultValue = _resultField.GetValue(result);
-        var innerPtr = (IntPtr)_innerField.GetValue(result)!;
-        if (resultValue?.ToString() == "Ok" && innerPtr != IntPtr.Zero)
-            return Marshal.PtrToStringUTF8(innerPtr);
-        return null;
+        internal bool IsOk => Payload != null;
     }
 
-    string? GetNativeError(object? result)
+    internal NativeCallResult ReadNativeResult(object? result)
     {
-        if (result == null) return null;
-        var resultValue = _resultField.GetValue(result);
-        var innerPtr = (IntPtr)_innerField.GetValue(result)!;
-        if (resultValue?.ToString() == "Err" && innerPtr != IntPtr.Zero)
-            return Marshal.PtrToStringUTF8(innerPtr);
-        return null;
+        if (result == null) return default;
+
+        // Defence in depth, not the mechanism: GetValue would already throw on a foreign type.
+        // Making the refusal explicit means an unrecognised shape leaks rather than risking a
+        // foreign free.
+        if (result.GetType() != _cResultStringType) return default;
+
+        var isOk = _resultField.GetValue(result)?.ToString() == "Ok";
+        var ptr = (IntPtr)_innerField.GetValue(result)!;
+        if (ptr == IntPtr.Zero) return default;
+
+        // Zero the box BEFORE freeing: the pointer becomes unreachable through this result, so a
+        // second read frees nothing instead of corrupting the heap.
+        _innerField.SetValue(result, IntPtr.Zero);
+        try
+        {
+            var payload = _marshal(ptr);
+            return isOk ? new NativeCallResult(payload, null) : new NativeCallResult(null, payload);
+        }
+        finally
+        {
+            _stringFree(ptr);
+        }
+    }
+
+    internal static string Require(NativeCallResult r, string call)
+        => r.Payload ?? throw new RgbLibException(r.Error ?? $"{call} failed");
+
+    internal static string InterpretCreateUtxosBegin(NativeCallResult r)
+    {
+        if (r.IsOk) return r.Payload!;
+        // WHY the error text: rgb-lib reports "already has enough UTXOs" as a failure, and the
+        // caller treats that as success-with-nothing-to-do.
+        if (r.Error?.Contains("AlreadyAvailable", StringComparison.OrdinalIgnoreCase) == true) return "";
+        throw new RgbLibException(r.Error ?? "create_utxos_begin failed");
+    }
+
+    internal static List<BtcTransaction> InterpretListBtcTransactions(NativeCallResult r)
+        => JsonSerializer.Deserialize<List<BtcTransaction>>(Require(r, "list_transactions")) ?? [];
+
+    internal static List<UnspentOutput> InterpretListUnspents(NativeCallResult r)
+    {
+        var unspentsJson = r.Payload;
+        // WHY throw rather than return an empty list: a genuinely empty wallet yields Ok with "[]", so a
+        // null payload means the native call FAILED. Returning empty made a failure indistinguishable
+        // from "this wallet has no UTXOs", and the replenishment sweep then read zero colorable UTXOs,
+        // computed zero free slots, and signed a UTXO-creation transaction because of an error — the
+        // false-ACCEPT its own invariant forbids. Observed live on 2026-08-04 against a wallet that had
+        // 23 UTXOs at the time. Seven sibling calls in this file already throw on a null payload;
+        // ListBtcTransactionsAsync was the last one that did not, and was closed under finding G.
+        if (unspentsJson == null)
+            throw new RgbLibException(r.Error ?? "list_unspents failed");
+
+        var unspents = JsonSerializer.Deserialize<List<UnspentOutputResponse>>(unspentsJson);
+        return unspents?.Select(u => new UnspentOutput(
+            new UtxoInfo
+            {
+                Outpoint = new Outpoint(u.Utxo?.Outpoint?.Txid ?? "", (int)(u.Utxo?.Outpoint?.Vout ?? 0)),
+                BtcAmount = u.Utxo?.BtcAmount ?? 0,
+                Colorable = u.Utxo?.Colorable ?? false
+            },
+            u.RgbAllocations?.Select(a => new RgbAllocation
+            {
+                AssetId = a.AssetId ?? "",
+                Amount = RgbAssignmentJson.FungibleValueOrZeroForEveryOtherVariant(a.Assignment),
+                Settled = a.Settled
+            }).ToList() ?? []
+        )).ToList() ?? [];
     }
 
     public void Dispose()
@@ -817,15 +1298,15 @@ class AssetNiaResponse
     [JsonPropertyName("ticker")] public string? Ticker { get; set; }
     [JsonPropertyName("name")] public string? Name { get; set; }
     [JsonPropertyName("precision")] public int Precision { get; set; }
-    [JsonPropertyName("issued_supply")] public long IssuedSupply { get; set; }
+    [JsonPropertyName("issued_supply")] public ulong IssuedSupply { get; set; }
     [JsonPropertyName("balance")] public AssetBalanceResponse? Balance { get; set; }
 }
 
 class AssetBalanceResponse
 {
-    [JsonPropertyName("settled")] public long Settled { get; set; }
-    [JsonPropertyName("future")] public long Future { get; set; }
-    [JsonPropertyName("spendable")] public long Spendable { get; set; }
+    [JsonPropertyName("settled")] public ulong Settled { get; set; }
+    [JsonPropertyName("future")] public ulong Future { get; set; }
+    [JsonPropertyName("spendable")] public ulong Spendable { get; set; }
 }
 
 class BlindReceiveResponse
@@ -858,7 +1339,7 @@ class OutpointResponse
 class RgbAllocationResponse
 {
     [JsonPropertyName("asset_id")] public string? AssetId { get; set; }
-    [JsonPropertyName("amount")] public long Amount { get; set; }
+    [JsonPropertyName("assignment")] public JsonElement Assignment { get; set; }
     [JsonPropertyName("settled")] public bool Settled { get; set; }
 }
 
@@ -879,10 +1360,12 @@ class TransferResponse
     
     static int ParseStatus(string? s) => s?.ToLowerInvariant() switch
     {
-        "waitingcounterparty" => 0,
-        "waitingconfirmations" => 1,
+        "waitingcounterparty" => 1,
+        "waitingconfirmations" => 2,
         "settled" => 3,
         "failed" => 4,
+        "initiated" => 5,
+        "waitingsafeheight" => 6,
         _ => int.TryParse(s, out var n) ? n : -1
     };
     
@@ -902,7 +1385,7 @@ class IssueAssetResponse
     [JsonPropertyName("ticker")] public string? Ticker { get; set; }
     [JsonPropertyName("name")] public string? Name { get; set; }
     [JsonPropertyName("precision")] public int Precision { get; set; }
-    [JsonPropertyName("issued_supply")] public long IssuedSupply { get; set; }
+    [JsonPropertyName("issued_supply")] public ulong IssuedSupply { get; set; }
 }
 
 class GenerateKeysResponse
