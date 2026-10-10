@@ -54,4 +54,36 @@ public class AssetMatchingTests
             Assert.False(RGBInvoiceListener.IsAssetMatch(null, transfer),
                 $"Null-asset invoice must reject transfer with asset '{transfer}'");
     }
+
+    // Same 32-byte ContractId under different presentations must settle.
+    const string ContractA = "rgb:bGxsbGxs-bGxsbGx-sbGxsbG-xsbGxsb-GxsbGxs-bGxsbGw";
+
+    [Fact]
+    public void SameContract_PrefixedVsBarePresentation_ReturnsTrue()
+    {
+        const string bare = "bGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGxsbGw";
+        Assert.True(RGBInvoiceListener.IsAssetMatch(ContractA, bare));
+        Assert.True(RGBInvoiceListener.IsAssetMatch(bare, ContractA));
+    }
+
+    [Fact]
+    public void SameContract_MnemonicSuffix_ReturnsTrue()
+    {
+        Assert.True(RGBInvoiceListener.IsAssetMatch(
+            ContractA, ContractA + "#some-mnemonic-words-here"));
+    }
+
+    [Fact]
+    public void DifferentContracts_ReturnsFalse()
+    {
+        const string contractB = "rgb:ERERERER-ERERERE-RERERER-ERERERE-RERERER-ERERERE";
+        Assert.False(RGBInvoiceListener.IsAssetMatch(ContractA, contractB));
+    }
+
+    [Fact]
+    public void UnparseableTransfer_NeverMatchesCanonicalInvoice()
+    {
+        Assert.False(RGBInvoiceListener.IsAssetMatch(ContractA, "JUNK_ASSET_ID"));
+        Assert.False(RGBInvoiceListener.IsAssetMatch(ContractA, ""));
+    }
 }

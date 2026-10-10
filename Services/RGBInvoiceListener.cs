@@ -1144,7 +1144,31 @@ public class RGBInvoiceListener : IHostedService
 
     internal static bool IsAssetMatch(string? invoiceAssetId, string transferAssetId)
     {
-        return !string.IsNullOrEmpty(invoiceAssetId) && transferAssetId == invoiceAssetId;
+        if (string.IsNullOrEmpty(invoiceAssetId)) return false;
+        if (transferAssetId == invoiceAssetId) return true;
+        // One ContractId has many serializations (rgb: prefix, #mnemonic suffix,
+        // dash separators, _/~ base64 variants). Compare canonical 32-byte payloads
+        // so funds arriving under a different presentation still settle instead of
+        // sitting uncredited; unparseable ids never match.
+        string canonicalInvoice;
+        try
+        {
+            canonicalInvoice = RgbPricingCode.CanonicalizeAssetId(invoiceAssetId);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        string canonicalTransfer;
+        try
+        {
+            canonicalTransfer = RgbPricingCode.CanonicalizeAssetId(transferAssetId);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        return string.Equals(canonicalInvoice, canonicalTransfer, StringComparison.Ordinal);
     }
 
     internal static long SaturatingSum(IEnumerable<long> values)
