@@ -568,6 +568,9 @@ public class RGBWalletService : IRGBWalletService
 
     public async Task<RGBInvoice> CreateInvoiceAsync(string walletId, string? assetId, long? amount, TimeSpan? expiration, string? btcPayInvoiceId = null, int minConfirmations = 1, long? monitoringExpirationTimestamp = null, CancellationToken ct = default)
     {
+        if (expiration <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(expiration),
+                "Cannot create an invoice that is already expired");
         await GetWalletOrThrow(walletId, ct);
 
         long? expTs = expiration.HasValue ? DateTimeOffset.UtcNow.Add(expiration.Value).ToUnixTimeSeconds() : null;

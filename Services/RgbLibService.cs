@@ -439,6 +439,9 @@ public class RgbLibService : IRgbLibService
 
     public async Task<InvoiceResponse> BlindReceiveAsync(string walletId, string? assetId, long? amount, long? expiration, int minConfirmations = 1, CancellationToken ct = default)
     {
+        if (expiration <= DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            throw new ArgumentOutOfRangeException(nameof(expiration),
+                "Cannot request a native invoice that is already expired");
         var handle = await GetOrCreateWalletAsync(walletId, ct);
 
         await using var ctx = _db.CreateContext();

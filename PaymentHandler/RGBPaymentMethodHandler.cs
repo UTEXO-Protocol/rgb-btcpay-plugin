@@ -178,6 +178,9 @@ public class RGBPaymentMethodHandler : IPaymentMethodHandler
             ctx.InvoiceEntity.Price, invoiceCurrency, plan.Units, plan.PricingCode, rate.Rate, rate.Source);
 
         var expiration = ctx.InvoiceEntity.ExpirationTime - DateTimeOffset.UtcNow;
+        if (expiration <= TimeSpan.Zero)
+            throw new PaymentMethodUnavailableException(
+                "RGB invoice is already expired: refusing to create an unpayable invoice prompt");
         var invoice = await _wallets.CreateInvoiceAsync(wallet.Id, asset.AssetId, plan.Units, expiration,
             ctx.InvoiceEntity.Id, config.MinConfirmations,
             ctx.InvoiceEntity.MonitoringExpiration.ToUnixTimeSeconds());
