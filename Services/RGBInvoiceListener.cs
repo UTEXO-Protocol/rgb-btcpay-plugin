@@ -917,9 +917,22 @@ public class RGBInvoiceListener : IHostedService
 
         var receivedAmount = tx.Amount;
         var divisibility = details.AssetPrecision;
-        var amountDecimal = divisibility > 0
-            ? receivedAmount / (decimal)Math.Pow(10, divisibility)
-            : receivedAmount;
+        if (divisibility is < 0 or > RgbPricingPlan.MaxPrecision)
+        {
+            // The blob is persisted data, not fresh validation: a negative precision
+            // would over-credit the payment, and a huge one throws in the power math
+            // below, holding the row unsettleable with a LogCritical every sweep.
+            _log.LogCritical(
+                "RGB payment for invoice {InvoiceId} has out-of-range asset precision {Precision}; refusing registration",
+                rgbInv.BtcPayInvoiceId, divisibility);
+            return PaymentRegistration.Unregisterable;
+        }
+        // Exact decimal power loop (no double Math.Pow: precision >= 29 overflows
+        // the decimal cast and throws per-invoice on every sweep).
+        var divisor = 1m;
+        for (var i = 0; i < divisibility; i++)
+            divisor *= 10m;
+        var amountDecimal = receivedAmount / divisor;
         var paymentId = $"rgb:{rgbInv.RecipientId}:{tx.Idx}";
 
         var existingPayment = invoiceEntity.GetPayments(false)
